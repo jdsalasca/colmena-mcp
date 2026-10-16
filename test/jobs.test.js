@@ -17,8 +17,9 @@ function repo() {
   fs.writeFileSync(path.join(d, 'a.txt'), 'a\n'); git(d, 'add', '-A'); git(d, 'commit', '-qm', 'i');
   return d;
 }
+import { baseEnv, codexOnlyHome } from './helpers.js';
 const mk = (env = {}) => {
-  const config = getConfig({ LUNA_CODEX_BIN: fake, LUNA_HOME: tmp('luna-jh-'), ...env });
+  const config = getConfig(baseEnv(codexOnlyHome(), env));
   return { jm: createJobManager(config), config };
 };
 const S = (task, extra = {}) => ({ task, cwd: tmp('luna-cwd-'), isolation: 'inplace', ...extra });
@@ -144,4 +145,34 @@ test('recoverOrphans marks stale running jobs', () => {
 test('tokens: min result is compact', async () => {
   const { jm } = mk(); const id = jm.submit(S('hola')); await jm.wait([id]);
   assert.ok(JSON.stringify(jm.result(id)).length < 1200);
+});
+
+test('unknown worker alias → error listing valid ones, no job created', () => {
+  const { jm } = mk();
+  assert.throws(() => jm.submit(S('x', { worker: 'ghost' })), /worker 'ghost' no existe; disponibles: luna-max, alt/);
+  assert.equal(jm.list({}).length, 0);
+});
+test('explicit worker reaches the adapter; continue reuses it; summarize uses role worker', async () => {
+  const log = path.join(tmp('colmena-log-'), 'f.log'); process.env.FAKE_LOG = log;
+  try {
+    const { jm } = mk();
+    const id = jm.submit(S('uno', { worker: 'alt' })); await jm.wait([id]);
+    assert.equal(jm.result(id).worker, 'alt');
+    const id2 = jm.continueJob(id, 'sigue'); await jm.wait([id2]);
+    assert.equal(jm.result(id2).worker, 'alt');
+    const s = jm.summarize(id); await jm.wait([s]);
+    assert.equal(jm.result(s).worker, 'luna-max');
+    const calls = fs.readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    assert.equal(calls[0].argv[calls[0].argv.indexOf('-m') + 1], 'gpt-alt');
+    assert.ok(calls[0].argv.includes('model_reasoning_effort="high"'));
+    assert.equal(calls[1].argv[calls[1].argv.indexOf('-m') + 1], 'gpt-alt');
+    assert.equal(calls[2].argv[calls[2].argv.indexOf('-m') + 1], 'gpt-6-luna');
+  } finally { delete process.env.FAKE_LOG; }
+});
+test('job.started / job.finished events on the bus', async () => {
+  const { jm } = mk(); const seen = [];
+  jm.bus.on('job.started', e => seen.push(['s', e.worker]));
+  jm.bus.on('job.finished', e => seen.push(['f', e.state]));
+  const id = jm.submit(S('hola')); await jm.wait([id]);
+  assert.deepEqual(seen, [['s', 'luna-max'], ['f', 'done']]);
 });

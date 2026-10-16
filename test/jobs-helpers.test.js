@@ -9,7 +9,8 @@ import { createJobManager } from '../src/jobs.js';
 
 const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-codex.js');
 const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
-const mk = () => { const config = getConfig({ LUNA_CODEX_BIN: fake, LUNA_HOME: tmp('luna-hh-') }); return { jm: createJobManager(config), config }; };
+import { baseEnv, codexOnlyHome } from './helpers.js';
+const mk = () => { const config = getConfig(baseEnv(codexOnlyHome())); return { jm: createJobManager(config), config }; };
 const withLog = async fn => {
   const log = path.join(tmp('luna-hl-'), 'f.log'); process.env.FAKE_LOG = log;
   try { await fn(log); } finally { delete process.env.FAKE_LOG; }

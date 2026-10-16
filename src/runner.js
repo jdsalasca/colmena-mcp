@@ -1,31 +1,9 @@
 import { spawn, execFile } from 'node:child_process';
 import fs from 'node:fs';
 
-export const MODEL = 'gpt-6-luna';
-export const EFFORT = 'max';
-
-export function buildArgs({ prompt, workdir, lastMessagePath, readonly = false, resumeSessionId, ephemeral = false }) {
-  const a = ['--search', 'exec'];
-  if (resumeSessionId) a.push('resume', resumeSessionId);
-  a.push('--json', '--skip-git-repo-check', '-m', MODEL, '-c', `model_reasoning_effort="${EFFORT}"`);
-  if (readonly) a.push('-s', 'read-only');
-  else a.push('--dangerously-bypass-approvals-and-sandbox');
-  if (ephemeral) a.push('--ephemeral');
-  a.push('-C', workdir, '-o', lastMessagePath, prompt);
-  return a;
-}
-
-export function parseLine(line) {
-  let o;
-  try { o = JSON.parse(line); } catch { return { kind: 'other' }; }
-  if (o?.type === 'thread.started' && o.thread_id) return { kind: 'session', sessionId: o.thread_id };
-  if (o?.type === 'item.completed' && o.item?.type === 'agent_message') return { kind: 'message', text: String(o.item.text ?? '') };
-  if (o?.type === 'turn.completed') return { kind: 'usage', usage: o.usage ?? {} };
-  return { kind: 'other' };
-}
-
-export function startRun(config, args, { cwd, onEvent = () => {}, logPath }) {
-  const child = spawn(config.codex.bin, [...config.codex.prefixArgs, ...args], {
+// cmd = {bin, prefixArgs}; parseLine normalizes provider output into {kind, ...} events.
+export function startRun(cmd, args, { cwd, onEvent = () => {}, logPath, parseLine }) {
+  const child = spawn(cmd.bin, [...cmd.prefixArgs, ...args], {
     cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
   const log = logPath ? fs.createWriteStream(logPath, { flags: 'a' }) : null;
