@@ -60,7 +60,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     const ws = spec.workspace ?? iso.prepare(config, { cwd, isolation: spec.isolation ?? 'inplace', id });
     const kind = spec.kind ?? 'run';
     const prompt = spec.rawPrompt ?? buildPrompt({
-      task: spec.task, contextFiles: spec.contextFiles, handoff: handoffTexts, kind, standards: config.settings.standards,
+      task: spec.task, contextFiles: spec.contextFiles, handoff: handoffTexts, kind, standards: config.settings.standards, branch: ws.branch,
     });
     store.create({
       id, state: 'queued', kind, task: String(spec.task).slice(0, 300), cwd,

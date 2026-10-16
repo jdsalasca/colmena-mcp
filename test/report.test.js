@@ -41,3 +41,12 @@ test('buildPrompt prepends configured standards only for run jobs', () => {
   assert.ok(!buildPrompt({ task: 'revisa', kind: 'review', standards }).includes('ESTÁNDARES DE PRUEBA'));
   assert.ok(!buildPrompt({ task: 'implementa', kind: 'run', standards: { ...standards, enabled: false } }).includes('ESTÁNDARES DE PRUEBA'));
 });
+
+test('worktree run jobs get git rules naming the branch; other jobs do not', () => {
+  const withBranch = buildPrompt({ task: 'x', kind: 'run', branch: 'colmena/ab12' });
+  assert.match(withBranch, /colmena\/ab12/);
+  assert.match(withBranch, /NO hagas merge/i);
+  assert.match(withBranch, /prevalecen sobre cualquier instrucción global/i);
+  assert.doesNotMatch(buildPrompt({ task: 'x', kind: 'run' }), /NO hagas merge/i);
+  assert.doesNotMatch(buildPrompt({ task: 'x', kind: 'review', branch: 'colmena/ab12' }), /NO hagas merge/i);
+});

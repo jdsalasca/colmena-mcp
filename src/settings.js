@@ -34,10 +34,12 @@ const Standards = z.object({ enabled: z.boolean().default(true), preamble: z.str
 export const DEFAULT_SETTINGS = {
   workers: {
     'luna-max': { provider: 'codex', model: 'gpt-6-luna', effort: 'max', priority: 1, strengths: ['code', 'refactor', 'tests'] },
-    // Same GPT-6 Luna model through OpenCode Go at $0.10 in / $0.50 out per Mtok: the cheapest strong option (checked 2026-10-16).
-    'luna-go': { provider: 'opencode', model: 'opencode-go/gpt-6-luna', effort: 'max', priority: 2, strengths: ['code', 'docs', 'summary', 'report'], budget: { monthly_usd: 10 } },
+    // OpenCode Go flagship: DeepSeek V4.1 Flash ($0.15 in / $0.60 out per Mtok). Never Luna through OpenCode (owner's rule).
+    'ds-flash': { provider: 'opencode', model: 'opencode-go/deepseek-v4.1-flash', effort: 'max', priority: 2, strengths: ['code', 'docs', 'summary', 'report'], budget: { monthly_usd: 10 } },
+    // max-hive: massive parallel bulk work at ~zero cost on a Go "contributor" model (no zero data retention). See README "max-hive".
+    'max-hive': { provider: 'opencode', model: 'opencode-go/muse-spark-1.3-contributor', effort: 'high', priority: 9, strengths: ['bulk'], budget: { monthly_usd: 5 } },
   },
-  roles: { reporter: 'luna-go', summarizer: 'luna-go', reviewer: 'luna-max' },
+  roles: { reporter: 'ds-flash', summarizer: 'ds-flash', reviewer: 'luna-max' },
   defaults: { worker: 'luna-max', max_parallel: 4, timeout_min: 60 },
   plugins: { notify: {}, report: {} },
   standards: { enabled: true, preamble: DEFAULT_STANDARDS_PREAMBLE },

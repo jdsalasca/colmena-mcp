@@ -24,7 +24,7 @@ npm test
 claude mcp add -s user colmena -- node "<ruta-absoluta>/colmena-mcp/src/server.js"
 ```
 
-Humo real (gasta unas pocas llamadas): `npm run smoke -- luna-max,luna-go --report`.
+Humo real (gasta unas pocas llamadas): `npm run smoke -- luna-max,ds-flash --report`.
 
 ## Configuración: `colmena.yml`
 
@@ -33,8 +33,9 @@ Ubicación: `$COLMENA_CONFIG` o `~/.colmena/colmena.yml`. Sin archivo se usan lo
 ```yaml
 workers:
   luna-max:       {provider: codex,    model: gpt-6-luna, effort: max, priority: 1, strengths: [code, refactor, tests]}
-  luna-go:        {provider: opencode, model: opencode-go/gpt-6-luna, effort: max, priority: 2, strengths: [code, docs, summary, report], budget: {monthly_usd: 10}}
-roles:    {reporter: luna-go, summarizer: luna-go, reviewer: luna-max}
+  ds-flash:       {provider: opencode, model: opencode-go/deepseek-v4.1-flash, effort: max, priority: 2, strengths: [code, docs, summary, report], budget: {monthly_usd: 10}}
+  max-hive:       {provider: opencode, model: opencode-go/muse-spark-1.3-contributor, effort: high, priority: 9, strengths: [bulk], budget: {monthly_usd: 5}}
+roles:    {reporter: ds-flash, summarizer: ds-flash, reviewer: luna-max}
 defaults: {worker: luna-max, max_parallel: 4, timeout_min: 60}
 plugins:
   notify: {enabled: true, on: [start, finish, fail], heartbeat_min: 10}
@@ -50,8 +51,14 @@ Notas:
 - `effort` se pasa como `model_reasoning_effort` (Codex) o `--variant` (OpenCode).
 - OpenCode informa el costo en USD de cada ejecución. **Codex no**: para contabilizarlo añade `price_per_mtok: {input: …, output: …}` al worker.
 - El saldo real de tus cuentas no se puede consultar por API: el presupuesto es **declarativo + conteo local** (`usage.json`).
-- **Por qué solo estos dos workers:** en OpenCode Go (revisado 2026-10-16, USD por Mtok entrada/salida) `gpt-6-luna` cuesta 0.10/0.50, menos que `deepseek-v4.1-flash` (0.15/0.60) y mucho menos que `deepseek-v4-pro` (0.66/1.98), siendo el mismo modelo que corre en Codex. Una ejecución trivial sale en ≈ $0.004 (flash ≈ $0.007, pro ≈ $0.034). `luna-max` (Codex) va primero y `luna-go` es el respaldo con presupuesto. Otras opciones están comentadas en `colmena.example.yml`.
+- **Regla de reparto:** Luna va **solo por Codex** (`luna-max`). En OpenCode Go el worker principal es **DeepSeek V4.1 Flash** (`ds-flash`, $0.15 entrada / $0.60 salida por Mtok, revisado 2026-10-16), con presupuesto mensual. No se usa Luna a través de OpenCode.
 - OpenCode carga mucho contexto propio (~30-50k tokens por ejecución): conviene delegarle tareas con cierto peso.
+
+### max-hive: maximizar tareas en paralelo a costo ~0
+`max-hive` es el worker para **maximizar muchas tareas pequeñas en paralelo con costo cercano a cero** (tests masivos, generación repetitiva, migraciones mecánicas, auditorías por archivo, borradores). Usa un modelo **"contributor"** del plan Go: sin *zero data retention* (no le mandes secretos ni código sensible) y con calidad menor que `luna-max`, así que **lo que produce lo valida el orquestador** (`review`/`diff`) antes de fusionar. Tiene prioridad 9 y fortaleza `bulk`: el router solo lo elige si lo pides (`worker: "max-hive"` o `kind: "bulk"`) o si no queda otro disponible.
+- **Evita los modelos `-free`:** traen cuota; `max-hive` busca modelos *contributor* del plan Go.
+- **Costo ~0 no es verificable desde aquí:** OpenCode reporta un costo nominal por ejecución (≈ $0.004 con `muse-spark-1.3-contributor`; `gemini-4-argon-contributor` ≈ $0.16, ¡caro!). Si tu plan Go lo cubre es cosa de tu cuenta; por eso `max-hive` lleva un tope de seguridad (`budget.monthly_usd`) que el contador local respeta.
+- **Cómo buscarle otro modelo (para Claude):** `node scripts/opencode-models.mjs --contributor` lista los *contributor* del más barato al más caro; `--max-out 0.6 --json` filtra por precio. Elige el más barato con ventana de contexto suficiente, cambia `model`/`effort` en `colmena.yml` (si no ofrece `max`, usa su mejor variante), llama `reload_config`, y valídalo con una ejecución real (`run` con `worker: "max-hive"`, `isolation: "readonly"`) revisando `cost_usd` y que el reporte salga en formato RESULT/FILES/TESTS/RISKS.
 
 ### Variables de entorno
 `COLMENA_HOME`, `COLMENA_CONFIG`, `COLMENA_CODEX_BIN`, `COLMENA_OPENCODE_BIN`, `COLMENA_MAX_PARALLEL`, `COLMENA_JOB_TIMEOUT_MIN`, `COLMENA_NOTIFIER` (`toast`|`log`|`none`). Los nombres `LUNA_*` de la v0.1 se siguen aceptando.

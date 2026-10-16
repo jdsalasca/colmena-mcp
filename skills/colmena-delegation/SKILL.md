@@ -9,7 +9,8 @@ Tú eres el **PM y validador de calidad**; los workers (Codex, OpenCode) impleme
 
 ## 1. Elegir worker
 - `workers` → mira `available`, `remaining_usd`, `strengths` y `priority`.
-- Por defecto `luna-max` (Codex, prioridad 1); cuando se agote o necesites paralelismo extra → `luna-go` (mismo Luna vía OpenCode Go, barato y con presupuesto). Si omites `worker` el router elige (usa `kind: "code"|"docs"|…` como pista).
+- Por defecto `luna-max` (Codex, prioridad 1); cuando se agote o necesites paralelismo extra → `ds-flash` (DeepSeek V4.1 Flash en OpenCode Go, con presupuesto). Luna solo va por Codex. Si omites `worker` el router elige (usa `kind: "code"|"docs"|…` como pista).
+- **`max-hive`** (`worker: "max-hive"` o `kind: "bulk"`): muchas tareas pequeñas y mecánicas en paralelo a costo ~0, con un modelo *contributor* (sin zero data retention: nada sensible) y calidad menor → **valida siempre** con `review`/`diff`. Para cambiarle el modelo usa `scripts/opencode-models.mjs --contributor`, edita `colmena.yml` y llama `reload_config` (detalle en el README).
 - Si un worker está sin presupuesto, `run` falla con alternativas: no hay cambio silencioso; decide tú.
 - OpenCode carga ~50k tokens de contexto por ejecución: no lo uses para tareas triviales.
 
