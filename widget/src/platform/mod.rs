@@ -1,6 +1,12 @@
 use crate::framebuffer::FrameBuffer;
 use crate::position::{Position, WorkArea};
 use crate::scene::Point;
+use serde::{Deserialize, Serialize};
+use std::ffi::OsString;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const WS_POPUP: u32 = 0x8000_0000;
 pub const WS_EX_LAYERED: u32 = 0x0008_0000;
@@ -9,6 +15,110 @@ pub const WS_EX_APPWINDOW: u32 = 0x0004_0000;
 pub const WS_EX_TOPMOST: u32 = 0x0000_0008;
 pub const WS_EX_TRANSPARENT: u32 = 0x0000_0020;
 pub const SWP_NOACTIVATE: u32 = 0x0010;
+static NEXT_PROCESS_TEMP: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProcessRecord {
+    pub pid: u32,
+    pub executable: PathBuf,
+}
+
+#[derive(Debug)]
+pub struct ProcessRegistry {
+    path: PathBuf,
+    record: ProcessRecord,
+}
+
+impl ProcessRegistry {
+    pub fn publish(home: &Path, record: ProcessRecord) -> io::Result<Self> {
+        fs::create_dir_all(home)?;
+        let path = home.join("widget-process.json");
+        let bytes = serde_json::to_vec(&record).map_err(io::Error::other)?;
+        let file_name = path.file_name().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "ruta de registro sin nombre")
+        })?;
+        let mut published = false;
+        for _ in 0..8 {
+            let temporary = process_temp_path(home, file_name);
+            let mut file = match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)
+            {
+                Ok(file) => file,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            };
+            let result = file.write_all(&bytes).and_then(|()| file.flush());
+            drop(file);
+            if let Err(error) = result {
+                let _ = fs::remove_file(&temporary);
+                return Err(error);
+            }
+            match fs::rename(&temporary, &path) {
+                Ok(()) => {
+                    published = true;
+                    break;
+                }
+                Err(error) => {
+                    let _ = fs::remove_file(&temporary);
+                    return Err(error);
+                }
+            }
+        }
+        if !published {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "no se pudo reservar temporal para el registro del widget",
+            ));
+        }
+        Ok(Self { path, record })
+    }
+
+    pub fn read(home: &Path) -> io::Result<Option<ProcessRecord>> {
+        let bytes = match fs::read(home.join("widget-process.json")) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(io::Error::other)
+    }
+}
+
+impl Drop for ProcessRegistry {
+    fn drop(&mut self) {
+        let current = Self::read(self.path.parent().unwrap_or_else(|| Path::new(".")))
+            .ok()
+            .flatten();
+        if current.as_ref() == Some(&self.record) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn process_temp_path(home: &Path, file_name: &std::ffi::OsStr) -> PathBuf {
+    let mut name = OsString::from(file_name);
+    let sequence = NEXT_PROCESS_TEMP.fetch_add(1, Ordering::Relaxed);
+    name.push(format!(".{}.{}.tmp", std::process::id(), sequence));
+    home.join(name)
+}
+
+pub fn mutex_name(home: &Path) -> io::Result<String> {
+    let normalized = fs::canonicalize(home)?;
+    let key = normalized
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_lowercase();
+    let hash = key
+        .as_bytes()
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+    Ok(format!("Local\\ColmenaWidget-{hash:016x}"))
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WindowConfig {

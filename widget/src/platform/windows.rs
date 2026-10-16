@@ -1,19 +1,23 @@
 use super::{
-    LayeredPlatform, NativeZOrder, PlatformError, PlatformEvent, SWP_NOACTIVATE, WindowBackend,
-    WindowConfig, ZOrder, choose_background_z_order,
+    LayeredPlatform, NativeZOrder, PlatformError, PlatformEvent, ProcessRecord, ProcessRegistry,
+    SWP_NOACTIVATE, WindowBackend, WindowConfig, ZOrder, choose_background_z_order, mutex_name,
 };
 use crate::framebuffer::FrameBuffer;
 use crate::position::{Position, WorkArea};
 use crate::scene::Point;
 use std::mem::{size_of, zeroed};
 use std::ptr::null_mut;
-use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
+use windows::Win32::Foundation::{
+    COLORREF, CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HINSTANCE, HWND, LPARAM,
+    LRESULT, POINT, SIZE, SetLastError, WIN32_ERROR, WPARAM,
+};
 use windows::Win32::Graphics::Gdi::{
     AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
     CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, HBITMAP, HDC,
     HGDIOBJ, MONITORINFO, SelectObject,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Threading::{CreateMutexW, GetCurrentProcessId};
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
@@ -21,17 +25,101 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
     DispatchMessageW, GWL_EXSTYLE, GWLP_USERDATA, GetForegroundWindow, GetShellWindow, HWND_BOTTOM,
-    HWND_NOTOPMOST, HWND_TOP, IsIconic, IsWindowVisible, MA_NOACTIVATE, MSG, PM_REMOVE,
-    PeekMessageW, PostQuitMessage, RegisterClassW, SWP_NOACTIVATE as WIN_SWP_NOACTIVATE,
-    SWP_NOOWNERZORDER, SWP_NOSIZE, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WM_CLOSE, WM_DESTROY, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_RBUTTONUP, WM_TIMER, WNDCLASSW, WaitMessage,
+    HWND_NOTOPMOST, HWND_TOP, IsIconic, IsWindowVisible, MA_NOACTIVATE, MB_ICONERROR, MB_OK, MSG,
+    MessageBoxW, PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassW,
+    SWP_NOACTIVATE as WIN_SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOSIZE, SetTimer,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow,
+    WM_CLOSE, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
+    WM_RBUTTONUP, WM_TIMER, WNDCLASSW, WaitMessage,
 };
 use windows::core::BOOL;
 
 const CLASS_NAME: &str = "ColmenaWidgetLayeredWindow";
 const WINDOW_TITLE: &str = "Colmena Widget";
 const TIMER_ID: usize = 1;
+
+pub fn show_startup_error(message: &str) {
+    let title: Vec<u16> = "Colmena Widget".encode_utf16().chain(Some(0)).collect();
+    let body: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        let _ = MessageBoxW(
+            None,
+            windows::core::PCWSTR(body.as_ptr()),
+            windows::core::PCWSTR(title.as_ptr()),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
+#[derive(Debug)]
+pub struct InstanceGuard {
+    mutex: Option<HANDLE>,
+    registry: Option<ProcessRegistry>,
+}
+
+impl Drop for InstanceGuard {
+    fn drop(&mut self) {
+        self.registry.take();
+        if let Some(mutex) = self.mutex.take() {
+            unsafe {
+                let _ = CloseHandle(mutex);
+            }
+        }
+    }
+}
+
+pub fn acquire_instance(
+    home: &std::path::Path,
+    executable: &std::path::Path,
+) -> Result<InstanceGuard, PlatformError> {
+    std::fs::create_dir_all(home)
+        .map_err(|error| PlatformError(format!("no se pudo crear COLMENA_HOME: {error}")))?;
+    let name = mutex_name(home)
+        .map_err(|error| PlatformError(format!("no se pudo normalizar COLMENA_HOME: {error}")))?;
+    let wide_name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+    unsafe { SetLastError(WIN32_ERROR(0)) };
+    let mutex = unsafe { CreateMutexW(None, false, windows::core::PCWSTR(wide_name.as_ptr())) }
+        .map_err(|error| PlatformError(format!("CreateMutexW: {error}")))?;
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        unsafe {
+            let _ = CloseHandle(mutex);
+        }
+        return Err(PlatformError(
+            "ya existe un widget activo para este COLMENA_HOME".to_owned(),
+        ));
+    }
+
+    let executable = std::fs::canonicalize(executable)
+        .map_err(|error| PlatformError(format!("no se pudo resolver el ejecutable: {error}")));
+    let executable = match executable {
+        Ok(executable) => executable,
+        Err(error) => {
+            unsafe {
+                let _ = CloseHandle(mutex);
+            }
+            return Err(error);
+        }
+    };
+    let record = ProcessRecord {
+        pid: unsafe { GetCurrentProcessId() },
+        executable,
+    };
+    let registry = match ProcessRegistry::publish(home, record) {
+        Ok(registry) => registry,
+        Err(error) => {
+            unsafe {
+                let _ = CloseHandle(mutex);
+            }
+            return Err(PlatformError(format!(
+                "no se pudo publicar widget-process.json: {error}"
+            )));
+        }
+    };
+    Ok(InstanceGuard {
+        mutex: Some(mutex),
+        registry: Some(registry),
+    })
+}
 
 struct DibSurface {
     dc: HDC,
