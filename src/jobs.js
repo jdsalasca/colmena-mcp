@@ -89,7 +89,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     const state = { cancelled: false, timedOut: false, timer: null, handle: null };
     live.set(id, state);
     maxSeen = Math.max(maxSeen, live.size);
-    let usage = {}; let lastText = '';
+    let usage = {}; let lastText = ''; let lastSessionId;
     const adapter = getAdapter(worker.provider);
     const handle = startRun(adapter.cmd(config), adapter.buildArgs({
       prompt, workdir: meta.workdir, lastMessagePath: path.join(dir, 'last_message.md'),
@@ -97,7 +97,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     }), {
       cwd: meta.workdir, logPath: path.join(dir, 'events.jsonl'), parseLine: adapter.parseLine,
       onEvent: e => {
-        if (e.kind === 'session') store.update(id, { sessionId: e.sessionId });
+        if (e.kind === 'session' && e.sessionId !== lastSessionId) { lastSessionId = e.sessionId; store.update(id, { sessionId: e.sessionId }); }
         else if (e.kind === 'message') lastText = e.text;
         else if (e.kind === 'usage') for (const [k, v] of Object.entries(e.usage)) if (typeof v === 'number') usage[k] = (usage[k] ?? 0) + v;
       },
