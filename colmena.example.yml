@@ -1,0 +1,44 @@
+# Copia este archivo a ~/.colmena/colmena.yml (o apunta COLMENA_CONFIG a él) y ajústalo.
+# Si defines `workers`, REEMPLAZAN a los de por defecto; el resto de secciones se mezclan con los defaults.
+
+workers:
+  luna-max:
+    provider: codex            # codex | opencode
+    model: gpt-6-luna
+    effort: max                # model_reasoning_effort (codex) / --variant (opencode)
+    priority: 1                # menor = se prefiere antes
+    strengths: [code, refactor, tests]
+    # price_per_mtok: {input: 1.0, output: 8.0}   # USD por millón de tokens; Codex no informa costo, así se estima
+    # budget: {monthly_usd: 20}                   # al llegar al tope el worker queda "sin presupuesto"
+    # enabled: true
+  deepseek-pro:
+    provider: opencode
+    model: opencode-go/deepseek-v4-pro
+    effort: max
+    priority: 2
+    strengths: [code]
+    budget: {monthly_usd: 10}
+  deepseek-flash:
+    provider: opencode
+    model: opencode-go/deepseek-v4.1-flash
+    priority: 3
+    strengths: [docs, summary, report]
+
+roles:                         # quién hace los trabajos auxiliares
+  reporter: deepseek-flash     # tool report
+  summarizer: deepseek-flash   # tools summarize / compact
+  reviewer: luna-max           # tool review
+
+defaults:
+  worker: luna-max
+  max_parallel: 4
+  timeout_min: 60
+
+plugins:
+  notify:
+    enabled: true
+    on: [start, finish, fail]
+    heartbeat_min: 10
+  report:
+    enabled: true
+    default_style: papercraft

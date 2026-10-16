@@ -79,3 +79,13 @@ Adaptadores y proveedores falsos (`fake-codex.js`, `fake-opencode.js`), notifica
 
 ## 10. Hitos
 H1 renombre + YAML + adaptadores (Codex refactor) + registro del MCP · H2 OpenCode · H3 notify · H4 ledger/router/`workers` · H5 report + papercraft.
+
+## 11. Resultados verificados (spikes 2026-10-16)
+
+- OpenCode 1.18.30: el shim npm (`opencode.cmd/.ps1`) no admite argumentos arbitrarios de forma segura; el servidor localiza el binario real `node_modules\opencode-ai\bin\opencode.exe`.
+- Eventos de `run --format json`: `step_start{sessionID}`, `text{part.text}`, `step_finish{part.tokens{input,output,reasoning}, part.cost}`. El último `text` es el mensaje final; los `cost` se suman.
+- **Solo lectura en OpenCode: `--agent plan`** (verificado: se niega a crear archivos incluso con `--auto`). `OPENCODE_CONFIG_CONTENT` con `permission: deny` NO fue respetado.
+- `--variant max|high` aceptado por `deepseek-v4-pro` y `deepseek-v4.1-flash`. `--pure` reduce poco el contexto base (~47k vs ~54k tokens de entrada) y se usa por determinismo.
+- Toast de Windows: `powershell.exe` 5.1 + WinRT, título/cuerpo por variables de entorno.
+- Humo real: Luna (codex), DeepSeek flash y pro (opencode) responden en el formato de reporte; el reportero real (flash) generó el HTML papercraft sin recurrir al respaldo.
+- Cambios respecto al diseño: la rama de cada job es `colmena/<id>`; el evento del bus es `job.finished` con `state` (no hay `job.failed` separado); se añadió el parámetro `kind` a `run`.
