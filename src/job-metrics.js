@@ -9,5 +9,6 @@ export function jobMetrics(meta) {
     durationValid,
     durationS: durationValid ? (meta.endedAt - meta.startedAt) / 1000 : 0,
     costUsd: Number(numberOrZero(meta.costUsd).toFixed(4)),
+    nominalCostUsd: Number(numberOrZero(meta.nominalCostUsd ?? meta.costUsd).toFixed(4)),
   };
 }

@@ -68,7 +68,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
       isolation: spec.workspace ? 'reuse' : (spec.isolation ?? 'inplace'),
       workdir: ws.workdir, branch: ws.branch, base: ws.base, readonly: ws.readonly, warning: ws.warning,
       parentId: spec.parentId, resumeSessionId: spec.resumeSessionId, ephemeral: !!spec.ephemeral,
-      worker: worker.name, provider: worker.provider, note: selection.note,
+      worker: worker.name, provider: worker.provider, model: worker.model, effort: worker.effort ?? null, note: selection.note,
       owner: process.pid, createdAt: Date.now(),
     });
     store.audit({ id, kind, worker: worker.name, cwd, isolation: spec.isolation, briefHash: crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 12) });
@@ -146,7 +146,8 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     if (meta.kind === 'run' && !meta.readonly) {
       try { const ch = iso.changes(meta.workdir, meta.base); patch.files = ch.files; patch.diffstat = ch.diffstat; } catch {}
     }
-    patch.costUsd = costOf(worker, usage);
+    patch.nominalCostUsd = costOf(worker, usage);
+    patch.costUsd = worker.free ? 0 : patch.nominalCostUsd;
     try { ledger.record(meta.worker, usage, patch.costUsd); } catch { /* bookkeeping must never break a job */ }
     const updated = store.update(id, patch);
     bus.emit('job.finished', { id, worker: meta.worker, provider: meta.provider ?? 'desconocido', kind: meta.kind, state: updated.state, task: meta.task, error: updated.error, ...(updated.message ? { message: updated.message } : {}), costUsd: patch.costUsd, usage, startedAt: updated.startedAt, endedAt: updated.endedAt });
@@ -157,14 +158,19 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
   function status(id) {
     const m = need(id);
     const end = m.endedAt ?? Date.now();
-    return { id, state: m.state, kind: m.kind, worker: m.worker, elapsedS: Math.round((end - (m.startedAt ?? m.createdAt)) / 1000), task: (m.task ?? '').slice(0, 80), ...(m.branch ? { branch: m.branch } : {}), ...(m.note ? { note: m.note } : {}), ...(m.finishedByGrace ? { finishedByGrace: true } : {}), ...(m.message ? { message: m.message } : {}) };
+    return { id, state: m.state, kind: m.kind, worker: m.worker, model: m.model ?? null, provider: m.provider ?? null, effort: m.effort ?? null, elapsedS: Math.round((end - (m.startedAt ?? m.createdAt)) / 1000), task: (m.task ?? '').slice(0, 80), ...(m.branch ? { branch: m.branch } : {}), ...(m.note ? { note: m.note } : {}), ...(m.finishedByGrace ? { finishedByGrace: true } : {}), ...(m.message ? { message: m.message } : {}) };
   }
 
   function result(id, { detail = 'min' } = {}) {
     const m = need(id);
     if (!TERMINAL.has(m.state)) return status(id);
     const text = lastMessage(id) ?? '';
-    const out = { id, state: m.state, kind: m.kind, worker: m.worker, cost_usd: Number((m.costUsd ?? 0).toFixed(4)) };
+    const out = {
+      id, state: m.state, kind: m.kind, worker: m.worker,
+      model: m.model ?? null, provider: m.provider ?? null, effort: m.effort ?? null,
+      cost_usd: Number((m.costUsd ?? 0).toFixed(4)),
+      nominal_cost_usd: Number((m.nominalCostUsd ?? m.costUsd ?? 0).toFixed(4)),
+    };
     if (m.note) out.note = m.note;
     if (m.finishedByGrace) out.finishedByGrace = true;
     if (m.message) out.message = m.message;

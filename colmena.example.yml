@@ -18,6 +18,7 @@ workers:
     strengths: [code, refactor, tests]
     # price_per_mtok: {input: 1.0, output: 8.0}   # USD por millón de tokens; Codex no informa costo, así se estima
     # budget: {monthly_usd: 20}                   # al llegar al tope el worker queda "sin presupuesto"
+    # free: true                                  # solo si tu plan garantiza $0; conserva nominal y omite bloqueo por presupuesto
     # enabled: true
   ds-flash:                    # insignia de OpenCode Go: DeepSeek V4.1 Flash ($0.15 entrada / $0.60 salida por Mtok)
     provider: opencode         # en OpenCode NO se usa Luna: Luna va por Codex

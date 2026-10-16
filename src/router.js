@@ -5,11 +5,12 @@ export function workerStatus(settings, ledger) {
   return Object.entries(settings.workers).map(([alias, w]) => {
     const spent = ledger.spent(alias);
     const budget = w.budget?.monthly_usd ?? null;
+    const free = w.free === true;
     return {
-      alias, provider: w.provider, model: w.model, effort: w.effort ?? null, priority: w.priority, strengths: w.strengths,
+      alias, provider: w.provider, model: w.model, effort: w.effort ?? null, priority: w.priority, strengths: w.strengths, free,
       enabled: w.enabled !== false, spent_usd: spent, budget_usd: budget,
       remaining_usd: budget == null ? null : round(Math.max(0, budget - spent)),
-      available: w.enabled !== false && (budget == null || spent < budget),
+      available: w.enabled !== false && (free || budget == null || spent < budget),
       preferred: preferredProvider !== 'auto' && w.provider === preferredProvider,
     };
   });

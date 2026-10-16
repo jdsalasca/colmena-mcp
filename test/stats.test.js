@@ -19,8 +19,8 @@ test('computeStats agrega estados, workers, kinds, costos, tokens y duración en
     range: { since: new Date(sinceMs).toISOString(), until: new Date(now).toISOString() },
     totals: { jobs: 5, done: 1, failed: 1, cancelled: 1, orphaned: 1, successRate: 0.25, costUsd: 1.25, durationS: 5 },
     byWorker: {
-      alt: { runs: 2, done: 0, failed: 0, successRate: 0, avgDurationS: 0, costUsd: 0, inputTokens: 0, outputTokens: 0 },
-      luna: { runs: 3, done: 1, failed: 1, successRate: 0.5, avgDurationS: 2.5, costUsd: 1.25, inputTokens: 15, outputTokens: 22 },
+      alt: { runs: 2, done: 0, failed: 0, successRate: 0, avgDurationS: 0, costUsd: 0, nominalCostUsd: 0, inputTokens: 0, outputTokens: 0 },
+      luna: { runs: 3, done: 1, failed: 1, successRate: 0.5, avgDurationS: 2.5, costUsd: 1.25, nominalCostUsd: 1.25, inputTokens: 15, outputTokens: 22 },
     },
     byKind: {
       review: { runs: 1, done: 0, failed: 0, successRate: 0, avgDurationS: 0, costUsd: 0, inputTokens: 0, outputTokens: 0 },
@@ -85,4 +85,13 @@ test('computeStats devuelve ceros y tasa nula cuando no hay metas', () => {
     totals: { jobs: 0, done: 0, failed: 0, cancelled: 0, orphaned: 0, successRate: null, costUsd: 0, durationS: 0 },
     byWorker: {}, byKind: {}, topFailures: [],
   });
+});
+
+test('computeStats agrega costo nominal por worker además del costo contabilizado', () => {
+  const stats = computeStats([
+    { createdAt: now, state: 'done', worker: 'gratis', kind: 'run', costUsd: 0, nominalCostUsd: 0.02 },
+  ], { sinceMs: now, now });
+
+  assert.equal(stats.byWorker.gratis.costUsd, 0);
+  assert.equal(stats.byWorker.gratis.nominalCostUsd, 0.02);
 });
