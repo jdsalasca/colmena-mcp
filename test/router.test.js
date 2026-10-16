@@ -15,6 +15,7 @@ workers:
   a: {provider: codex, model: m1, priority: 1, strengths: [code], budget: {monthly_usd: 1}}
   b: {provider: opencode, model: m2, priority: 2, strengths: [docs]}
   c: {provider: opencode, model: m3, priority: 3, strengths: [docs, summary], enabled: false}
+  d: {provider: opencode, model: m4, priority: 4, strengths: [code]}
 roles: {reporter: b, summarizer: b, reviewer: a}
 defaults: {worker: a}
 `;
@@ -40,6 +41,9 @@ test('workerStatus: spent, remaining, availability', () => {
   assert.equal(rows.a.available, true);
   assert.equal(rows.b.budget_usd, null);
   assert.equal(rows.c.available, false);
+  s.preferences.provider = 'opencode';
+  assert.equal(workerStatus(s, l).find(r => r.alias === 'a').preferred, false);
+  assert.equal(workerStatus(s, l).find(r => r.alias === 'b').preferred, true);
   l.record('a', {}, 0.7);
   assert.equal(workerStatus(s, l).find(r => r.alias === 'a').available, false);
 });
@@ -51,6 +55,16 @@ test('pickWorker: default → priority fallback → kind preference', () => {
   assert.equal(pickWorker(s, l, { kind: 'nonexistent' }), 'a');
   l.record('a', {}, 5);
   assert.equal(pickWorker(s, l, {}), 'b');
+});
+test('pickWorker: provider preference scopes kind and default, while explicit worker wins', () => {
+  const codex = settingsFor(`${YML}\npreferences: {provider: codex}\n`);
+  const opencode = settingsFor(`${YML}\npreferences: {provider: opencode}\n`);
+  const l = ledgerFor();
+
+  assert.equal(pickWorker(codex, l, { kind: 'docs' }), 'a');
+  assert.equal(pickWorker(opencode, l, {}), 'b');
+  assert.equal(pickWorker(opencode, l, { kind: 'code' }), 'd');
+  assert.equal(pickWorker(opencode, l, { worker: 'a' }), 'a');
 });
 test('pickWorker: explicit exhausted worker → error with alternatives, no silent fallback', () => {
   const s = settingsFor(YML); const l = ledgerFor(); l.record('a', {}, 5);
