@@ -208,6 +208,7 @@ export function createJobManager(config) {
     submit, status, result, wait, cancel, continueJob, summarize, compact, review, recoverOrphans,
     list: f => store.list(f ?? {}).map(m => status(m.id)),
     meta: id => need(id),
+    mark: (id, patch) => store.update(id, patch),
     jobDir: store.jobDir,
     stats: () => ({ running: live.size, queued: queue.length, maxSeen }),
   };

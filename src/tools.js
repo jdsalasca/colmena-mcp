@@ -83,14 +83,19 @@ export function buildServer(config) {
       const m = terminalMeta(a.job_id);
       if (!m.branch) throw new Error('este job no usó worktree; no hay rama que fusionar');
       iso.commitAll(m.workdir, `luna: ${a.job_id}`);
-      return iso.merge(m.cwd, m.branch, a.strategy ?? 'merge');
+      const res = iso.merge(m.cwd, m.branch, a.strategy ?? 'merge');
+      if (res.ok) jm.mark(a.job_id, { merged: true });
+      return res;
     });
 
   tool('luna_cleanup', 'Elimina worktrees y ramas luna/* creados por este servidor (de un job, o más viejos que N días).',
-    { job_id: z.string().optional(), older_than_days: z.number().optional() },
+    { job_id: z.string().optional(), older_than_days: z.number().optional(), force: z.boolean().optional().describe('necesario para descartar trabajo no fusionado') },
     a => {
       if (!a.job_id && a.older_than_days == null) throw new Error('indica job_id u older_than_days');
-      if (a.job_id) terminalMeta(a.job_id);
+      if (a.job_id) {
+        const m = terminalMeta(a.job_id);
+        if (m.branch && !m.merged && !a.force) throw new Error(`job ${a.job_id} no fusionado: su trabajo se perdería; usa luna_merge o force:true`);
+      } else if (!a.force) throw new Error('older_than_days puede descartar trabajo no fusionado; repite con force:true');
       return iso.cleanup(config, { id: a.job_id, olderThanDays: a.older_than_days });
     });
 

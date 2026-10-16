@@ -47,7 +47,7 @@ Humo real (gasta una llamada a Luna): `npm run smoke`.
 | `luna_review` | Revisión solo lectura de un job o cwd |
 | `luna_cancel` | Cancela (mata el árbol de procesos) |
 | `luna_merge` | Fusiona `luna/<id>` (manual; se niega con destino sucio; restaura ante conflictos) |
-| `luna_cleanup` | Borra worktrees y ramas `luna/*` propios |
+| `luna_cleanup` | Borra worktrees y ramas `luna/*` propios (exige `force` para descartar trabajo no fusionado) |
 
 Flujo recomendado: `luna_run_many` → `luna_wait` → `luna_result` → `luna_review`/`luna_diff` → `luna_merge` → `luna_cleanup`. La skill `skills/luna-delegation/SKILL.md` explica cómo redactar los briefs.
 

@@ -76,6 +76,22 @@ test('run_many + wait, worktree flow, diff, merge, cleanup', async () => {
   } finally { await client.close(); }
 });
 
+test('cleanup refuses to discard unmerged work unless force', async () => {
+  const { client, call } = await connect();
+  try {
+    const repo = tmp('luna-su-'); git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n'); git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'i');
+    const { job_id } = await call('luna_run', { task: 'EDIT x', cwd: repo });
+    await call('luna_wait', { job_ids: [job_id], timeout_s: 60 });
+    const denied = await call('luna_cleanup', { job_id });
+    assert.match(denied.error, /no fusionado/);
+    assert.match((await call('luna_cleanup', { older_than_days: 0 })).error, /force/);
+    const forced = await call('luna_cleanup', { job_id, force: true });
+    assert.equal(forced.removed.length, 1);
+  } finally { await client.close(); }
+});
+
 test('errors are returned as tool errors, not crashes', async () => {
   const { client, call } = await connect();
   try {

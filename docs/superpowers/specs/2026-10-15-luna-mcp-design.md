@@ -17,7 +17,7 @@ No-objetivos (YAGNI): UI, base de datos, soporte multi-modelo (el modelo es fijo
 
 ## 2. Hechos verificados del entorno
 
-- Codex CLI `0.130.0-alpha.5` en `C:\Users\jdsal\AppData\Local\OpenAI\Codex\bin\codex.exe` (no está en PATH; el servidor lo resuelve por variable `LUNA_CODEX_BIN` con ese valor por defecto).
+- Codex CLI `0.130.0-alpha.5` en `%LOCALAPPDATA%\OpenAI\Codex\bin\codex.exe` (no está en PATH; el servidor lo resuelve por variable `LUNA_CODEX_BIN` con ese valor por defecto).
 - `~/.codex/config.toml` ya fija `model = "gpt-6-luna"`, `model_reasoning_effort = "max"`, `sandbox_mode = "danger-full-access"`, `approval_policy = "on-request"`. `models_cache.json` lista `gpt-6-luna`.
 - `codex exec` soporta `--json`, `-m`, `-c k=v`, `-s <sandbox>`, `-C <dir>`, `-o <archivo>`, `--output-schema`, `--ephemeral`, `--dangerously-bypass-approvals-and-sandbox` y el subcomando `exec resume`.
 - La autenticación ya existe (`~/.codex/auth.json`); el servidor no maneja credenciales.
