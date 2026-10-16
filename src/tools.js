@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import YAML from 'yaml';
@@ -11,6 +10,7 @@ import { createNotifier } from './notifier.js';
 import { generateReport } from './plugins/report.js';
 import { computeStats, DAY_MS } from './stats.js';
 import { buildImprovePrompt, hasRecentImprove, PENDING_FOCUSES, CONTINUOUS_IMPROVEMENT_PROMPT } from './plugins/improve.js';
+import { writeFileAtomic } from './atomic-write.js';
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
 const isolationEnum = z.enum(['worktree', 'inplace', 'readonly']).optional()
@@ -45,24 +45,18 @@ function settingsDiff(before, after) {
   };
 }
 
-function persistPreference(config, provider) {
+function persistPreference(config, provider, atomicWriteDependencies) {
   const file = config.settingsPath ?? path.join(config.home, 'colmena.yml');
   const exists = fs.existsSync(file);
   const document = exists
     ? YAML.parseDocument(fs.readFileSync(file, 'utf8'))
     : new YAML.Document({});
   if (document.errors.length) throw new Error(`no se pudo actualizar preferences en ${file}: ${document.errors[0].message}`);
-  if (document.contents == null) document.contents = {};
+  if (document.contents == null) document.contents = document.createNode({});
   document.setIn(['preferences', 'provider'], provider);
 
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  try {
-    fs.writeFileSync(temporary, document.toString(), { encoding: 'utf8', flag: 'wx' });
-    fs.renameSync(temporary, file);
-  } finally {
-    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
-  }
+  writeFileAtomic(file, document.toString(), atomicWriteDependencies);
 }
 
 const taskShape = {
@@ -75,7 +69,7 @@ const taskShape = {
   handoff_from: z.array(z.string()).optional().describe('job_ids cuyos resúmenes se inyectan como contexto'),
 };
 
-export function buildServer(config) {
+export function buildServer(config, { atomicWriteDependencies } = {}) {
   const jm = createJobManager(config);
   jm.recoverOrphans();
   const nc = config.settings.plugins.notify;
@@ -98,14 +92,25 @@ export function buildServer(config) {
   tool('preferences', 'Consulta o cambia en caliente el proveedor preferido por el router y guarda el cambio en el archivo de configuración.',
     { provider: z.enum(['auto', 'codex', 'opencode']).optional().describe('auto conserva el ruteo actual; codex u opencode priorizan ese proveedor') },
     ({ provider }) => {
-      if (provider !== undefined) {
-        persistPreference(config, provider);
+      const changed = provider !== undefined;
+      if (changed) {
+        persistPreference(config, provider, atomicWriteDependencies);
         config.settings = { ...config.settings, preferences: { provider } };
       }
-      const selection = jm.routeWorker();
+      let selection;
+      try { selection = jm.routeWorker(); } catch (error) {
+        const message = error?.message ?? String(error);
+        return {
+          provider: config.settings.preferences.provider,
+          worker: null,
+          would_choose: null,
+          note: `${changed ? 'preferencia guardada; ' : ''}el router no pudo calcular qué worker elegir: ${message}`,
+        };
+      }
       return {
         provider: config.settings.preferences.provider,
         worker: selection.alias,
+        would_choose: selection.alias,
         ...(selection.note ? { note: selection.note } : {}),
       };
     });
