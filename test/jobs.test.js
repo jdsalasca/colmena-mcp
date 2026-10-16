@@ -216,8 +216,8 @@ test('explicit worker reaches the adapter; continue reuses it; summarize uses ro
 });
 test('job.started / job.finished events on the bus', async () => {
   const { jm } = mk(); const seen = [];
-  jm.bus.on('job.started', e => seen.push(['s', e.worker]));
-  jm.bus.on('job.finished', e => seen.push(['f', e.state]));
+  jm.bus.on('job.started', e => seen.push(['s', e.worker, e.provider]));
+  jm.bus.on('job.finished', e => seen.push(['f', e.state, e.provider]));
   const id = jm.submit(S('hola')); await jm.wait([id]);
-  assert.deepEqual(seen, [['s', 'luna-max'], ['f', 'done']]);
+  assert.deepEqual(seen, [['s', 'luna-max', 'codex'], ['f', 'done', 'codex']]);
 });
