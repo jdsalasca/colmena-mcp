@@ -1,4 +1,4 @@
-const round = n => Math.round(n * 1e6) / 1e6;
+import { round } from './job-metrics.js';
 
 // Estimated cost reserved per job so N concurrent submits cannot drain the same balance; worker overrides defaults.
 export const reserveUsdOf = (settings, worker) => worker.reserve_usd ?? settings.defaults.reserve_usd ?? 0;

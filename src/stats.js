@@ -1,12 +1,10 @@
-import { jobMetrics } from './job-metrics.js';
+import { jobMetrics, numberOrZero } from './job-metrics.js';
+import { TERMINAL, VERDICTS } from './job-states.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FAILURE_LIMIT = 5;
 const ERROR_LIMIT = 200;
-const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
-const VERDICTS = new Set(['accepted', 'needs_work']);
 
-const numberOrZero = value => Number.isFinite(value) ? value : 0;
 const successRate = (done, terminal) => terminal ? done / terminal : null;
 const ratio = (part, total) => total ? part / total : null;
 

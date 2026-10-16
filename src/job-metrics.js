@@ -1,4 +1,5 @@
-const numberOrZero = value => Number.isFinite(value) ? value : 0;
+export const numberOrZero = value => Number.isFinite(value) ? value : 0;
+export const round = n => Math.round(n * 1e6) / 1e6;
 
 export function jobMetrics(meta) {
   const durationValid = Number.isFinite(meta.startedAt)

@@ -10,9 +10,8 @@ import { chooseWorker, workerStatus, reserveUsdOf } from './router.js';
 import { buildPrompt, parseReport } from './report.js';
 import * as iso from './isolation.js';
 import { writeFileAtomic } from './atomic-write.js';
+import { TERMINAL, VERDICTS } from './job-states.js';
 
-const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
-const VERDICTS = new Set(['accepted', 'needs_work']);
 const RETRY_WINDOW_MS = 30_000;
 const CHECKPOINT_MS = 1000;
 
