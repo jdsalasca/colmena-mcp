@@ -30,5 +30,12 @@ Objetivo y *por qué* · rutas exactas (`context_files`) y qué NO tocar · crit
 ## 4. Ahorro de tokens
 Quédate en `detail: "min"`; los logs completos están en disco. No releas lo ya reportado: pide `summarize`. Si un job falla o hace timeout, lee `error` antes de relanzar y cambia algo del brief.
 
-## 5. Cuidado
+## 5. Agregar el widget al escritorio
+- Llama `widget {action: "start"}` para iniciar la escena de Colmena y registrar el PID verificado.
+- Llama `widget {action: "status"}` para confirmar que sigue corriendo; el estado comprueba la ruta del ejecutable contra el registro `widget-process.json` dentro de `COLMENA_HOME`.
+- Llama `widget {action: "stop"}` para cerrar el proceso registrado y esperar su salida. La tool solo acepta `action`; no recibe rutas ni argumentos de proceso.
+- El binario se toma de `COLMENA_WIDGET_BIN` o de `widget/dist/colmena-widget.exe`. Si no existe, ejecuta `cargo build --release` desde `widget/` y copia `target/release/colmena-widget.exe` a `widget/dist/`.
+- La integración MCP se habilita con `plugins.widget.enabled: true` (defecto). Tras iniciar, confirma con `status` antes de dar por agregado el widget.
+
+## 6. Cuidado
 Los agentes corren sin sandbox ni aprobaciones. Prefiere `worktree`; `inplace` solo con árbol limpio y tarea acotada; `readonly` para investigar/auditar. Nunca fusiones sin revisar. `cleanup` exige `force` para descartar trabajo no fusionado.

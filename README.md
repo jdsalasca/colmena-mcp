@@ -8,6 +8,7 @@ Servidor MCP (stdio) para que **Claude Code orqueste y valide, como un product m
 - **Paralelismo con cola**, sesiones reanudables, resúmenes, compactación y relevo entre agentes.
 - **Plugin `notify`:** toast de Windows al lanzar agentes, latido cada 10 min mientras haya trabajo, y aviso al terminar o fallar.
 - **Plugins `report` y `present`:** crean un reporte HTML de la ronda y una presentación papercraft de cierre del hito, respectivamente.
+- **Widget de escritorio:** la tool `widget` inicia, consulta y cierra la escena animada de Colmena.
 - **Mejora continua:** `improve` lanza un agente que deja en `docs/backlog/` ítems priorizados con briefs listos para delegar; `report` y `wait` te invitan cuando toca.
 - Sin base de datos: estado en `~/.colmena/` (`jobs/`, `worktrees/`, `reports/`, `usage.json`, `activity.log`, `audit.log`).
 
@@ -44,6 +45,7 @@ plugins:
   report: {enabled: true, default_style: papercraft}
   present: {enabled: true, default_style: papercraft-deck}
   improve: {enabled: true, hints: true}
+  widget: {enabled: true}
 standards:
   enabled: true
   # preamble: |-
@@ -100,8 +102,12 @@ Notas:
 | `report` | HTML de cierre de ronda (`job_ids`, `style?`, `title?`, `open?`); `next` sugiere `present` e indica lo que falta de `improve` |
 | `present` | Presentación HTML papercraft de un hito (`job_ids`, `title?`, `subtitle?`, `notes?`, `style?`, `open?`) |
 | `improve` | Mejora continua: agente en worktree que escribe `docs/backlog/<fecha>-<focus>.md` (backlog/features/debt/all) con briefs listos para delegar |
+| `widget` | `action: start \| status \| stop`: agrega el widget al escritorio, consulta su PID verificado o lo cierra |
 
 Flujo recomendado: `workers` → `run_many` → `wait` → `result` → `review`/`diff` → `merge` → `report` → `present` → auditar el deck → `improve`. La skill [`skills/colmena-delegation`](skills/colmena-delegation/SKILL.md) explica cómo redactar los briefs y validar la presentación antes de compartirla.
+
+### Widget de escritorio
+Usa `widget {action: start}` para abrir la escena; `status` informa `running` solo cuando el PID del registro coincide con la ruta real del proceso, y `stop` cierra ese proceso y espera su salida. El servidor hereda `COLMENA_HOME`; el registro Rust está en `$COLMENA_HOME/widget-process.json`. `plugins.widget.enabled` (defecto `true`) habilita la tool. El ejecutable se busca primero en `COLMENA_WIDGET_BIN` y luego en `widget/dist/colmena-widget.exe`. Si falta, compílalo dentro de `widget/` con `cargo build --release` y copia `target/release/colmena-widget.exe` a `dist/`.
 
 ## Notificaciones
 Con `plugins.notify` activo recibes un toast de Windows agrupado al lanzar agentes, con el proveedor visible (`luna-max (codex)`), y un latido cada `heartbeat_min` mientras haya trabajos corriendo o en cola. Los avisos de término y fallo identifican el proveedor (`[codex] luna-max`). Todas las notificaciones terminan con un overview actualizado por proveedor, por ejemplo `En curso: codex 2 · opencode 1 · +1 en cola`, o `En curso: ninguno` cuando no queda trabajo. Sin trabajo no hay latido. El cuerpo del toast respeta el límite de 300 caracteres y acorta la tarea para conservar el overview. Todo queda también en `~/.colmena/activity.log`.

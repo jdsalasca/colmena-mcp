@@ -80,4 +80,4 @@ La entrada del cursor físico se verificó para hover. En esta sesión, la entra
 - **No se puede iniciar:** al fallar la lectura del home, el mutex o la plataforma, aparece un diálogo con el error.
 - **Se tapa con una aplicación:** el comportamiento es intencional; una app normal visible queda por encima. Al volver al escritorio el widget se muestra en la banda normal de ventanas.
 
-La integración con MCP pertenece a una fase posterior y no forma parte de este ejecutable.
+El ejecutable no depende del servidor MCP; la integración de control está documentada en el README raíz del proyecto.
