@@ -100,6 +100,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     });
     reserveBudget(id, worker.name, reservedUsd);
     fs.writeFileSync(path.join(store.jobDir(id), 'prompt.txt'), prompt);
+    persistText(path.join(store.jobDir(id), 'brief.md'), prompt);
     store.audit({ id, kind, worker: worker.name, cwd, isolation: spec.isolation, briefHash: crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 12) });
     ensureFinished(id);
     queue.push({ id, prompt, worker, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS });
@@ -377,6 +378,19 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     });
   }
 
+  function retry(id, task) {
+    const m = need(id);
+    if (!TERMINAL.has(m.state)) throw new Error(`job ${id} sigue ${m.state}; espera a que termine antes de reintentar`);
+    const spec = {
+      cwd: m.cwd, parentId: id, kind: m.kind ?? 'run', worker: m.worker, ephemeral: !!m.ephemeral,
+      workspace: { workdir: m.workdir, branch: m.branch, base: m.base, readonly: m.readonly },
+    };
+    if (task != null) return submit({ ...spec, task });
+    const brief = readFile(path.join(store.jobDir(id), 'brief.md'));
+    if (brief == null) throw new Error(`job ${id} no guarda brief.md; reintenta con task para lanzarlo sin el brief original`);
+    return submit({ ...spec, task: m.task ?? `retry de ${id}`, rawPrompt: brief });
+  }
+
   const roleWorker = kind => config.settings.roles[kind === 'review' ? 'reviewer' : 'summarizer'];
 
   function helperJob(kind, id, rawPrompt) {
@@ -485,7 +499,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
 
   return {
     bus, resolveWorker, routeWorker: spec => chooseWorker(config.settings, ledger, spec), workers: () => workerStatus(config.settings, ledger),
-    submit, status, result, wait, cancel, continueJob, summarize, compact, review, verdict, recoverOrphans, shutdown,
+    submit, status, result, wait, cancel, continueJob, retry, summarize, compact, review, verdict, recoverOrphans, shutdown,
     list: f => store.list(f ?? {}).map(m => status(m.id)),
     metas: () => store.list({}),
     meta: id => need(id),
