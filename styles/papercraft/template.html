@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<style>
+  :root {
+    --kraft: #d9c19a; --kraft-dark: #b99a6b; --cream: #fbf5e6; --cream-2: #f3e9d0;
+    --ink: #3b2f24; --ink-soft: #6d5a47; --shadow: rgba(60, 40, 20, .28);
+    --mint: #bfe3cf; --coral: #f4b6a6; --butter: #f7dd8e; --sky: #bcd9ee; --lilac: #d9c8ee;
+    --stamp-done: #2f7d57; --stamp-fail: #b8452f; --stamp-other: #8a6d1f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --kraft: #3a2d22; --kraft-dark: #2a2018; --cream: #4a3b2d; --cream-2: #3f3225; --ink: #f4e9d4; --ink-soft: #cdbb9f; --shadow: rgba(0, 0, 0, .55);
+            --mint: #3e6b55; --coral: #8a4a3d; --butter: #8a7437; --sky: #3f6178; --lilac: #5d4a7a; --stamp-done: #8fd6b1; --stamp-fail: #f0a08e; --stamp-other: #e6cf85; }
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--kraft); }
+  body {
+    margin: 0; padding: 32px 16px 64px; color: var(--ink);
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; line-height: 1.55;
+    background-color: var(--kraft);
+    background-image:
+      radial-gradient(circle at 20% 15%, rgba(255,255,255,.12) 0 2px, transparent 3px),
+      radial-gradient(circle at 70% 60%, rgba(0,0,0,.05) 0 2px, transparent 3px),
+      repeating-linear-gradient(45deg, rgba(0,0,0,.025) 0 2px, transparent 2px 6px);
+    background-size: 90px 90px, 70px 70px, auto;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  .hand { font-family: 'Segoe Print', 'Bradley Hand', 'Marker Felt', 'Comic Sans MS', cursive; }
+
+  /* Banner: a stitched sheet of paper layered over two others */
+  .banner {
+    position: relative; background: var(--cream); padding: 36px 32px 30px; border-radius: 6px; transform: rotate(-.6deg);
+    box-shadow: 0 1px 0 rgba(255,255,255,.4) inset, 10px 10px 0 -2px var(--cream-2), 20px 20px 0 -4px var(--butter), 0 18px 28px -10px var(--shadow);
+    margin-bottom: 52px;
+  }
+  .banner::after { content: ''; position: absolute; inset: 10px; border: 2px dashed var(--kraft-dark); border-radius: 4px; pointer-events: none; opacity: .7; }
+  .banner h1 { margin: 0 0 6px; font-size: clamp(1.8rem, 5vw, 3rem); line-height: 1.1; letter-spacing: -.01em; }
+  .banner p { margin: 0; color: var(--ink-soft); font-size: 1.05rem; }
+  .washi { position: absolute; top: -14px; left: 50%; width: 130px; height: 28px; margin-left: -65px; transform: rotate(-3deg);
+    background: repeating-linear-gradient(115deg, var(--sky) 0 10px, rgba(255,255,255,.55) 10px 14px); opacity: .88;
+    box-shadow: 0 2px 4px rgba(0,0,0,.18); clip-path: polygon(3% 0, 97% 4%, 100% 50%, 96% 100%, 4% 96%, 0 50%); }
+
+  /* Stat tags */
+  .stats { display: flex; flex-wrap: wrap; gap: 14px; margin: 26px 0 0; padding: 0; list-style: none; }
+  .stats li { background: var(--butter); color: #3b2f24; padding: 8px 16px; border-radius: 999px 999px 999px 4px; box-shadow: 2px 3px 0 var(--shadow); font-size: .95rem; }
+  .stats li:nth-child(2) { background: var(--mint); transform: rotate(1.2deg); }
+  .stats li:nth-child(3) { background: var(--coral); transform: rotate(-1.4deg); }
+  .stats li:nth-child(4) { background: var(--lilac); }
+  .stats li:nth-child(5) { background: var(--sky); transform: rotate(.8deg); }
+  .stats b { font-size: 1.25rem; margin-right: 4px; }
+
+  /* Cards: cream paper, soft torn bottom edge, tape on top, stacked shadow */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr)); gap: 44px 34px; }
+  .card {
+    position: relative; background: var(--cream); padding: 30px 24px 34px; border-radius: 4px;
+    box-shadow: 0 1px 0 rgba(255,255,255,.35) inset, 0 7px 0 -3px var(--cream-2), 0 14px 0 -6px var(--kraft-dark), 0 18px 22px -8px var(--shadow);
+    clip-path: polygon(0 0, 100% 0, 100% 96.5%, 96% 98.5%, 91% 96.8%, 85% 99%, 78% 97%, 70% 99%, 62% 97.2%, 54% 98.8%, 46% 97%, 38% 99%, 30% 97.4%, 22% 98.8%, 14% 97%, 7% 98.6%, 0 97%);
+    animation: drop .5s ease-out both;
+  }
+  .card:nth-child(3n+1) { transform: rotate(-.8deg); } .card:nth-child(3n+2) { transform: rotate(.7deg); } .card:nth-child(3n) { transform: rotate(-.3deg); }
+  .card .washi { width: 96px; height: 24px; margin-left: -48px; }
+  .card:nth-child(4n+1) .washi { background: repeating-linear-gradient(115deg, var(--coral) 0 8px, rgba(255,255,255,.5) 8px 11px); }
+  .card:nth-child(4n+2) .washi { background: repeating-linear-gradient(115deg, var(--mint) 0 8px, rgba(255,255,255,.5) 8px 11px); }
+  .card:nth-child(4n+3) .washi { background: repeating-linear-gradient(115deg, var(--butter) 0 8px, rgba(255,255,255,.5) 8px 11px); }
+  .card header { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; }
+  .card h3 { margin: 0 0 8px; font-size: 1.15rem; line-height: 1.25; }
+  .stamp { flex: none; border: 2px solid currentColor; border-radius: 6px; padding: 2px 10px; font: 700 .75rem/1.6 'Courier New', monospace; text-transform: uppercase; letter-spacing: .12em; transform: rotate(5deg); opacity: .9; }
+  .stamp.done { color: var(--stamp-done); } .stamp.failed, .stamp.orphaned { color: var(--stamp-fail); } .stamp.cancelled, .stamp.other { color: var(--stamp-other); }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; padding: 0; }
+  .chip { background: var(--cream-2); border: 1px dashed var(--kraft-dark); border-radius: 999px; padding: 1px 10px; font-size: .78rem; color: var(--ink-soft); }
+  .card section { margin-top: 12px; }
+  .card h4 { margin: 0 0 2px; font-size: .8rem; text-transform: uppercase; letter-spacing: .1em; color: var(--ink-soft); font-family: 'Segoe Print', 'Bradley Hand', cursive; }
+  .card section p { margin: 0; overflow-wrap: anywhere; }
+  .card .risks { border-left: 4px solid var(--coral); padding-left: 10px; }
+  footer { text-align: center; margin-top: 56px; color: var(--ink-soft); font-size: .9rem; }
+  @keyframes drop { from { opacity: 0; translate: 0 -14px; } to { opacity: 1; translate: 0 0; } }
+  @media (prefers-reduced-motion: reduce) { .card { animation: none; } }
+  @media (max-width: 520px) { body { padding: 20px 12px 48px; } .banner { padding: 28px 20px 24px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="banner">
+    <span class="washi"></span>
+    <h1 class="hand">{{title}}</h1>
+    <p>{{subtitle}}</p>
+    <ul class="stats">
+      <li><b>{{jobs}}</b> agentes</li>
+      <li><b>{{done}}</b> terminaron bien</li>
+      <li><b>{{failed}}</b> con problemas</li>
+      <li><b>${{cost}}</b> de costo</li>
+      <li><b>{{duration}}</b> de trabajo</li>
+    </ul>
+  </header>
+  <main class="grid">
+<!--COLMENA:CARDS-->
+  </main>
+  <footer class="hand">Generado por Colmena · {{generated}}</footer>
+</div>
+</body>
+</html>

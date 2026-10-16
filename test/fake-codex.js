@@ -17,6 +17,8 @@ emit({ type: 'turn.started' });
 emit({ type: 'garbage-not-json-follows' });
 process.stdout.write('this is not json\n');
 
+if (prompt.includes('COLMENA_REPORT') && process.env.FAKE_REPORT === 'fail') { process.stderr.write('boom: reporter down\n'); process.exit(1); }
+if (prompt.includes('COLMENA_REPORT') && process.env.FAKE_REPORT !== 'skip') fs.writeFileSync(path.join(cwd, 'report.html'), '<!doctype html><html><body><h1>fake report</h1>' + '<p>relleno</p>'.repeat(60) + '</body></html>');
 if (prompt.includes('SLEEP')) setTimeout(() => {}, 600000);
 else if (prompt.includes('FAIL')) { process.stderr.write('boom: fake failure\n'); process.exit(1); }
 else setTimeout(() => {

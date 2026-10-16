@@ -28,9 +28,23 @@ async function connect(extraEnv = {}) {
   return { client, call };
 }
 
-const NAMES = ['workers', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'cancel', 'merge', 'cleanup'];
+const NAMES = ['workers', 'report', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'cancel', 'merge', 'cleanup'];
 
-test('lists the 15 tools; no model/effort knobs', async () => {
+test('workers + report tools end to end', async () => {
+  const { client, call } = await connect();
+  try {
+    const rows = await call('workers', {});
+    assert.deepEqual(rows.map(r => r.alias).sort(), ['alt', 'luna-max']);
+    assert.equal(rows.find(r => r.alias === 'luna-max').available, true);
+    const r1 = await call('run', { task: 'hola', cwd: tmp('colmena-c-'), wait: true, kind: 'code' });
+    const rep = await call('report', { job_ids: [r1.id], title: 'Ronda E2E' });
+    assert.equal(rep.usedFallback, false);
+    assert.ok(fs.existsSync(rep.path));
+    assert.match((await call('report', { job_ids: [r1.id], style: 'nope' })).error, /estilo 'nope'/);
+  } finally { await client.close(); }
+});
+
+test('lists all tools; no model/effort knobs', async () => {
   const { client } = await connect();
   try {
     const { tools } = await client.listTools();

@@ -6,6 +6,7 @@ import { createJobManager } from './jobs.js';
 import * as iso from './isolation.js';
 import { notifyPlugin } from './plugins/notify.js';
 import { createNotifier } from './notifier.js';
+import { generateReport } from './plugins/report.js';
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
 const isolationEnum = z.enum(['worktree', 'inplace', 'readonly']).optional()
@@ -41,6 +42,12 @@ export function buildServer(config) {
   const terminalMeta = id => { const m = jm.meta(id); if (!TERMINAL.has(m.state)) throw new Error(`job ${id} sigue ${m.state}`); return m; };
 
   tool('workers', 'Lista los workers de colmena.yml con prioridad, fortalezas, gasto del mes, presupuesto restante y disponibilidad. Úsalo para decidir a quién delegar.', {}, () => jm.workers());
+
+  if (config.settings.plugins.report.enabled) {
+    tool('report', 'Genera un reporte HTML bonito de lo logrado por los jobs indicados (ronda final). El worker del rol reporter lo redacta con el estilo elegido (defecto papercraft); si falla, se usa un renderizador de respaldo. Devuelve la ruta del HTML.',
+      { job_ids: z.array(z.string()).min(1), style: z.string().optional().describe('Nombre de estilo (carpeta styles/<nombre>); defecto: plugins.report.default_style'), title: z.string().optional(), subtitle: z.string().optional(), open: z.boolean().optional().describe('Abrir en el navegador al terminar') },
+      a => generateReport({ jm, config, ids: a.job_ids, style: a.style, title: a.title, subtitle: a.subtitle, open: a.open }));
+  }
 
   tool('run', 'Lanza un agente obrero (Codex u OpenCode según el worker; sin aprobaciones, con internet). Devuelve job_id; con wait=true espera el reporte (hasta timeout_s).',
     { ...taskShape, wait: z.boolean().optional(), timeout_s: z.number().optional() },
