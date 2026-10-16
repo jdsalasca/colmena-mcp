@@ -1,37 +1,31 @@
 ---
-name: luna-delegation
-description: Use when delegating implementation work to Luna agents through the luna_* MCP tools (gpt-6-luna max). Explains how to write briefs, when to use run/run_many/handoff, and the run → wait → result → review → merge flow while spending few orchestrator tokens.
+name: colmena-delegation
+description: Use when delegating implementation work to the Colmena MCP (Codex/Luna and OpenCode/DeepSeek workers). Explains how to pick a worker, write briefs, run rounds in parallel, validate quality like a product manager, merge, and close with an HTML report, while spending few orchestrator tokens.
 ---
 
-# Delegar a agentes Luna
+# Orquestar la colmena
 
-Tú orquestas y das lineamientos; Luna implementa. Luna **no ve esta conversación**: el brief debe bastar por sí solo.
+Tú eres el **PM y validador de calidad**; los workers (Codex, OpenCode) implementan. El agente **no ve esta conversación**: el brief debe bastar por sí solo.
 
-## Brief (3–8 líneas)
-1. **Objetivo** en una frase y el *por qué*.
-2. **Dónde**: rutas exactas (`context_files`) y qué NO tocar.
-3. **Criterio de aceptación**: comando de prueba que debe pasar (`npm test`, etc.).
-4. **Restricciones**: estilo, dependencias prohibidas, compatibilidad.
-No pegues código largo; apunta a archivos.
+## 1. Elegir worker
+- `workers` → mira `available`, `remaining_usd`, `strengths` y `priority`.
+- Código difícil o refactor → `luna-max`. Docs, resúmenes, tareas livianas → `deepseek-flash`. Si omites `worker` el router elige (usa `kind: "code"|"docs"|…` como pista).
+- Si un worker está sin presupuesto, `run` falla con alternativas: no hay cambio silencioso; decide tú.
+- OpenCode carga ~50k tokens de contexto por ejecución: no lo uses para tareas triviales.
 
-## Qué herramienta
-- Una tarea → `luna_run` (`wait: true` si es corta).
-- Varias independientes → `luna_run_many` (cada una en su worktree) y luego `luna_wait`.
-- Tarea que depende del resultado de otra → `luna_compact` del primero y `luna_handoff` con `from: [id]`.
-- Ajustes sobre lo mismo → `luna_continue` (conserva el contexto de la sesión).
-- Investigar o auditar sin editar → `isolation: "readonly"`.
+## 2. Brief (3–8 líneas)
+Objetivo y *por qué* · rutas exactas (`context_files`) y qué NO tocar · criterio de aceptación con comando de prueba · restricciones. Sin código largo: apunta a archivos.
 
-## Flujo
-1. `luna_run_many` → `job_id`s.
-2. `luna_wait` (mode `all`; repite si quedan `pending`).
-3. `luna_result` (min). Si `reportOk` es false, lee `text`; pide `detail: "normal"` solo si hace falta.
-4. Verifica: `luna_review` y/o `luna_diff`. Corre tú los tests del repo en la rama `luna/<id>` si es crítico.
-5. `luna_merge` (manual, `squash` para historial limpio) → `luna_cleanup`.
+## 3. Ronda
+1. `run_many` (cada tarea en su worktree `colmena/<id>`). Una tarea → `run` (`wait: true` si es corta).
+2. `wait` (mode `all`; repite mientras haya `pending`). El usuario recibe toasts al lanzar, cada 10 min y al terminar.
+3. `result` en `min`; solo `normal`/`full` si hace falta. Si `reportOk` es false lee `text`.
+4. **Valida como PM:** `review` (rol reviewer) y/o `diff`; corre tú los tests en la rama si es crítico. Si falta algo: `continue` con feedback concreto (mismo worker y sesión).
+5. Encadenar: `compact` del primero → `handoff` con `from: [id]`.
+6. `merge` (manual; `squash` para historial limpio) → **`report`** con los `job_ids` de la ronda (estilo `papercraft`; `open: true` para abrirlo) → `cleanup`.
 
-## Ahorro de tokens
-- Quédate con `detail: "min"`; los logs completos están en disco (`eventsLog`).
-- No releas lo que Luna ya reportó; pide un `luna_summarize` si necesitas contexto de una sesión larga.
-- Si un job falla o hace timeout, lee `error` antes de relanzar y cambia algo del brief.
+## 4. Ahorro de tokens
+Quédate en `detail: "min"`; los logs completos están en disco. No releas lo ya reportado: pide `summarize`. Si un job falla o hace timeout, lee `error` antes de relanzar y cambia algo del brief.
 
-## Cuidado
-Luna corre sin sandbox ni aprobaciones. Prefiere `worktree`; usa `inplace` solo con árbol limpio y tarea acotada. Nunca fusiones sin revisar.
+## 5. Cuidado
+Los agentes corren sin sandbox ni aprobaciones. Prefiere `worktree`; `inplace` solo con árbol limpio y tarea acotada; `readonly` para investigar/auditar. Nunca fusiones sin revisar. `cleanup` exige `force` para descartar trabajo no fusionado.
