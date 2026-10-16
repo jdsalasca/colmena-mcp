@@ -62,7 +62,8 @@ Notas:
 - Los errores del proveedor que OpenCode escribe en `events.jsonl` (`{"type":"error", error:{name, data:{message, isRetryable}}}`) ya no se pierden: `result.error` nombra al proveedor real (`opencode salió con código 1: <stderr o mensaje del evento>`) y, cuando un job falla en menos de 30 s con un error reintentable (`isRetryable: true` o mensaje con `Unexpected server error`), Colmena lo reintenta automáticamente una vez en el mismo worktree y worker. `defaults.retry_transient` (entero ≥ 0, defecto 1; `0` desactiva el reintento) lo controla y `reload_config` lo recoge. El reintento es del mismo job: suma el uso de ambos intentos y lo registra una sola vez en el ledger, emite `job.started`/`job.finished` una sola vez y guarda `meta.retries`.
 - `COLMENA_MAX_PARALLEL`, `COLMENA_JOB_TIMEOUT_MIN`, `COLMENA_EXIT_GRACE_S` y `COLMENA_RETRY_TRANSIENT` y `COLMENA_WAIT_MAX_S` conservan prioridad sobre los valores YAML.
 - `preferences.provider` acepta `auto` (ruteo actual), `codex` u `opencode`. La tool `preferences` consulta la preferencia y el worker elegido ahora, o la cambia en memoria y en el YAML efectivo (`COLMENA_CONFIG` o `$COLMENA_HOME/colmena.yml`) para el siguiente `run`; no requiere reinicio. Si no hay workers disponibles de ese proveedor, el router usa otro y devuelve un `note`. `worker` explícito siempre manda; las tools auxiliares continúan usando sus roles.
-- `workers` muestra `free` por worker; `stats {since_days?}` resume jobs, éxito, duración, costo registrado y `nominalCostUsd` por worker, tokens, tipos y fallos de la ventana indicada (30 días por defecto).
+- `workers` muestra `free` por worker; `stats {since_days?}` resume jobs, éxito, duración, costo registrado y `nominalCostUsd` por worker, tokens, tipos y fallos de la ventana indicada (30 días por defecto). Por worker también separa la calidad observada: `reviewed`, `accepted`, `needsWork`, `reviewCoverage` y `acceptanceRate` cuentan solo veredictos explícitos de `verdict`, así que un job sin veredicto no cuenta como rechazado.
+- `verdict {job_id, verdict: accepted|needs_work, note?}` registra la aceptación humana del orquestador sobre un job ya revisado con `review`/`diff`. Es la única vía que fija el veredicto (nunca se infiere del estado `done`) y exige un `job_id` válido; `meta.json` conserva `verdict`, `verdictNote` y `verdictAt`. Regístralo antes de `merge`.
 - `workers.<alias>.free: true` declara que el modelo de ese worker está cubierto a costo cero: el ledger registra `cost_usd: 0`, `meta.json` conserva `nominalCostUsd` y `result` muestra `cost_usd: 0` junto con `nominal_cost_usd`. El flag exime al worker de su presupuesto mensual. Úsalo solo si tu plan garantiza el costo cero; el costo nominal sigue visible para auditar lo que reportó el proveedor.
 - `meta.json`, `status` y `result` conservan `model`, `provider` y `effort` del worker seleccionados al crear cada job, aunque la configuración se recargue después.
 - `effort` se pasa como `model_reasoning_effort` (Codex) o `--variant` (OpenCode).
@@ -98,6 +99,7 @@ Notas:
 | `summarize`, `compact` | Resumen / brief de relevo de una sesión (rol `summarizer`) |
 | `handoff` | Agente nuevo con los resúmenes de otros como contexto |
 | `review` | Revisión solo lectura de un job o cwd (rol `reviewer`) |
+| `verdict` | Registra la aceptación humana (`accepted`/`needs_work`, `note?`) de un job revisado; `stats` la agrega por worker |
 | `cancel` | Cancela y mata el árbol de procesos |
 | `merge` | Fusiona `colmena/<id>` (manual; se niega con destino sucio; restaura ante conflictos) |
 | `cleanup` | Borra worktrees y ramas `colmena/*` propios (`force` para descartar trabajo no fusionado) |
@@ -106,7 +108,7 @@ Notas:
 | `improve` | Mejora continua: agente en worktree que escribe `docs/backlog/<fecha>-<focus>.md` (backlog/features/debt/all) con briefs listos para delegar |
 | `widget` | `action: start \| status \| stop`: agrega el widget al escritorio, consulta su PID verificado o lo cierra |
 
-Flujo recomendado: `workers` → `run_many` → `wait` → `result` → `review`/`diff` → `merge` → `report` → `present` → auditar el deck → `improve`. La skill [`skills/colmena-delegation`](skills/colmena-delegation/SKILL.md) explica cómo redactar los briefs y validar la presentación antes de compartirla.
+Flujo recomendado: `workers` → `run_many` → `wait` → `result` → `review`/`diff` → `verdict` → `merge` → `report` → `present` → auditar el deck → `improve`. La skill [`skills/colmena-delegation`](skills/colmena-delegation/SKILL.md) explica cómo redactar los briefs y validar la presentación antes de compartirla.
 
 ### Widget de escritorio
 Usa `widget {action: start}` para abrir la escena; `status` informa `running` solo cuando el PID del registro coincide con la ruta real del proceso, y `stop` cierra ese proceso y espera su salida. El servidor hereda `COLMENA_HOME`; el registro Rust está en `$COLMENA_HOME/widget-process.json`. `plugins.widget.enabled` (defecto `true`) habilita la tool. El ejecutable se busca primero en `COLMENA_WIDGET_BIN` y luego en `widget/dist/colmena-widget.exe`. Si falta, compílalo dentro de `widget/` con `cargo build --release` y copia `target/release/colmena-widget.exe` a `dist/`.
