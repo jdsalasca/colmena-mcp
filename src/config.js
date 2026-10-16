@@ -53,6 +53,8 @@ export function getConfig(env = process.env) {
     maxParallel: Number(e('MAX_PARALLEL')) || settings.defaults.max_parallel,
     timeoutMin: Number(e('JOB_TIMEOUT_MIN')) || settings.defaults.timeout_min,
     exitGraceS: Number(e('EXIT_GRACE_S')) || settings.defaults.exit_grace_s,
+    // 0 is a valid value (retries disabled), so don't use `||` here.
+    retryTransient: e('RETRY_TRANSIENT') == null ? settings.defaults.retry_transient : Number(e('RETRY_TRANSIENT')),
     codex: resolveCmd(e('CODEX_BIN') || newestCodex()),
     opencode: resolveCmd(e('OPENCODE_BIN') || findOpencode()),
     notifier: e('NOTIFIER') || 'toast',
@@ -63,6 +65,7 @@ export function getConfig(env = process.env) {
     config.maxParallel = Number(e('MAX_PARALLEL')) || next.defaults.max_parallel;
     config.timeoutMin = Number(e('JOB_TIMEOUT_MIN')) || next.defaults.timeout_min;
     config.exitGraceS = Number(e('EXIT_GRACE_S')) || next.defaults.exit_grace_s;
+    config.retryTransient = e('RETRY_TRANSIENT') == null ? next.defaults.retry_transient : Number(e('RETRY_TRANSIENT'));
     return next;
   };
   return config;

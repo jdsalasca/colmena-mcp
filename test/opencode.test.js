@@ -180,7 +180,7 @@ test('transient provider error: one automatic retry in the same job, cost record
   assert.equal(jm.meta(id).retries, 1);
   assert.equal(r.cost_usd, 0.03);
   assert.deepEqual(seen, ['started', 'finished:done']);
-  const events = fs.readFileSync(path.join(jm.jobDir(id), 'events.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  const events = fs.readFileSync(path.join(jm.jobDir(id), 'events.jsonl'), 'utf8').trim().split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
   assert.equal(events.filter(e => e.type === 'step_start').length, 2, 'two executions share the same job dir');
   const month = JSON.parse(fs.readFileSync(path.join(config.home, 'usage.json'), 'utf8'))[new Date().toISOString().slice(0, 7)]['ds-flash'];
   assert.equal(month.runs, 1, 'ledger records the job once');
@@ -195,7 +195,7 @@ test('exhausted transient retry fails with the provider name and the event messa
   assert.equal(jm.meta(id).retries, 1);
   assert.equal(r.cost_usd, 0.02);
   assert.match(r.error, /^opencode salió con código 1: Unexpected server error\. Check server logs for details\.$/);
-  const events = fs.readFileSync(path.join(jm.jobDir(id), 'events.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  const events = fs.readFileSync(path.join(jm.jobDir(id), 'events.jsonl'), 'utf8').trim().split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
   assert.equal(events.filter(e => e.type === 'step_start').length, 2);
 });
 test('retry_transient: 0 disables retry and non-retryable failures are never retried', async () => {

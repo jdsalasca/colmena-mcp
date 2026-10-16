@@ -1,12 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Verified against opencode 1.18.30: `run --format json` emits step_start{sessionID}, text{part.text}, step_finish{part.tokens, part.cost}.
+// Verified against opencode 1.18.30: `run --format json` emits step_start{sessionID}, text{part.text}, step_finish{part.tokens, part.cost},
+// and on provider failures error{error.name, error.data.message, error.data.isRetryable} (seen: UnknownError, APIError).
 function parseLine(line) {
   let o;
   try { o = JSON.parse(line); } catch { return { kind: 'other' }; }
   if (o?.type === 'step_start' && o.sessionID) return { kind: 'session', sessionId: o.sessionID };
   if (o?.type === 'text' && typeof o.part?.text === 'string') return { kind: 'message', text: o.part.text };
+  if (o?.type === 'error') {
+    const data = o.error?.data ?? {};
+    const message = String(data.message || o.error?.name || 'error del proveedor');
+    return { kind: 'error', message, retryable: data.isRetryable === true || message.includes('Unexpected server error') };
+  }
   if (o?.type === 'step_finish' && o.part) {
     const t = o.part.tokens ?? {};
     const usage = { input_tokens: t.input ?? 0, output_tokens: t.output ?? 0, reasoning_tokens: t.reasoning ?? 0 };
