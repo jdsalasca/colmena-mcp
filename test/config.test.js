@@ -11,6 +11,22 @@ test('defaults', () => {
   assert.equal(c.timeoutMin, 60);
   assert.equal(c.exitGraceS, 20);
   assert.equal(c.retryTransient, 1);
+  assert.equal(c.stallTimeoutMin, 15);
+});
+test('MC-11: COLMENA_STALL_TIMEOUT_MIN overrides YAML and reloadSettings picks it up', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-stall-'));
+  const file = path.join(home, 'colmena.yml');
+  fs.writeFileSync(file, 'defaults: {worker: luna-max, stall_timeout_min: 10}\n');
+  const c = getConfig({ COLMENA_HOME: home });
+  assert.equal(c.stallTimeoutMin, 10);
+  fs.writeFileSync(file, 'defaults: {worker: luna-max, stall_timeout_min: 2}\n');
+  c.reloadSettings();
+  assert.equal(c.stallTimeoutMin, 2);
+  const envOverride = getConfig({ COLMENA_HOME: home, COLMENA_STALL_TIMEOUT_MIN: '0' });
+  assert.equal(envOverride.stallTimeoutMin, 0);
+  fs.writeFileSync(file, 'defaults: {worker: luna-max, stall_timeout_min: 4}\n');
+  envOverride.reloadSettings();
+  assert.equal(envOverride.stallTimeoutMin, 0);
 });
 test('LUNA_HOME moves dirs', () => {
   const c = getConfig({ LUNA_HOME: 'X:\h', LUNA_CODEX_BIN: 'a.exe' });

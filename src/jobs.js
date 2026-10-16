@@ -94,7 +94,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
       workdir: ws.workdir, branch: ws.branch, base: ws.base, readonly: ws.readonly, warning: ws.warning,
       parentId: spec.parentId, resumeSessionId: spec.resumeSessionId, ephemeral: !!spec.ephemeral,
       worker: worker.name, provider: worker.provider, model: worker.model, effort: worker.effort ?? null, note: selection.note,
-      workerConfig: { ...worker }, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS,
+      workerConfig: { ...worker }, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS, stallMin: config.stallTimeoutMin,
       ...(reservedUsd > 0 ? { reservedUsd } : {}),
       owner: process.pid, createdAt: Date.now(),
     });
@@ -103,7 +103,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     persistText(path.join(store.jobDir(id), 'brief.md'), prompt);
     store.audit({ id, kind, worker: worker.name, cwd, isolation: spec.isolation, briefHash: crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 12) });
     ensureFinished(id);
-    queue.push({ id, prompt, worker, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS });
+    queue.push({ id, prompt, worker, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS, stallMin: config.stallTimeoutMin });
     pump();
     return id;
   }
@@ -113,8 +113,8 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     maxSeen = Math.max(maxSeen, live.size);
   }
 
-  function start({ id, prompt, worker, timeoutMin, exitGraceS }) {
-    const meta = store.update(id, { state: 'running', startedAt: Date.now(), timeoutMin, exitGraceS, logOffset: 0, usage: {}, retries: 0 });
+  function start({ id, prompt, worker, timeoutMin, exitGraceS, stallMin }) {
+    const meta = store.update(id, { state: 'running', startedAt: Date.now(), timeoutMin, exitGraceS, stallMin, logOffset: 0, usage: {}, retries: 0 });
     const dir = store.jobDir(id);
     const adapter = getAdapter(worker.provider);
     monitor(id, meta, worker, adapter, options => startRun(adapter.cmd(config), adapter.buildArgs({
@@ -145,6 +145,16 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     const retryLimit = config.retryTransient;
     const timeoutMin = meta.timeoutMin ?? config.timeoutMin;
     const exitGraceS = meta.exitGraceS ?? config.exitGraceS;
+    const stallMin = Number(meta.stallMin ?? config.stallTimeoutMin ?? 0);
+    const stallMs = stallMin * 60000;
+    const stallEnabled = Number.isFinite(stallMs) && stallMs > 0;
+    const eventsPath = path.join(dir, 'events.jsonl');
+    // Liveness comes from the log's size/mtime: bytes written by the provider count even if they never become parseable events.
+    const logMtime = () => { try { return fs.statSync(eventsPath).mtimeMs; } catch { return null; } };
+    const logStamp = () => { try { const s = fs.statSync(eventsPath); return `${s.size}:${s.mtimeMs}`; } catch { return ''; } };
+    let lastStamp = logStamp();
+    // An adopted job keeps the age of its log, so a long-mute provider dies at the next check instead of waiting a full window.
+    let lastActivityAt = logMtime() ?? Date.now();
 
     const finishByGrace = message => {
       if (state.finishedByGrace) return;
@@ -224,6 +234,16 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
       }
     };
 
+    const checkStall = () => {
+      if (state.stalled || state.delivered || state.cancelled || state.timedOut || state.finishedByGrace) return;
+      const stamp = logStamp();
+      if (stamp !== lastStamp) { lastStamp = stamp; lastActivityAt = Date.now(); return; }
+      if (Date.now() - lastActivityAt < stallMs) return;
+      state.stalled = true;
+      state.stallError = `sin actividad durante ${stallMin} min; el proveedor no respondió`;
+      state.handle.kill();
+    };
+
     const beginAttempt = () => {
       attemptStartedAt = Date.now();
       attemptError = null;
@@ -233,6 +253,10 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
         isDelivered: () => state.delivered || (meta.provider === 'opencode' && parseReport(state.lastText).ok),
       });
       store.update(id, { owner: process.pid, pid: state.handle.pid, ...(adopted ? { adopted: true } : {}) });
+      if (stallEnabled && !state.stallTimer) {
+        state.stallTimer = setInterval(checkStall, Math.max(20, Math.min(stallMs / 2, 30_000)));
+        state.stallTimer.unref?.();
+      }
       clearTimeout(state.timer);
       state.timer = setTimeout(onTimeout, Math.max(0, timeoutMin * 60000 - (Date.now() - (meta.startedAt ?? Date.now()))));
       if (state.finishedByGrace) state.handle.kill();
@@ -242,15 +266,19 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
         clearTimeout(state.checkpointTimer);
         state.checkpointTimer = null;
         const fastTransient = result.code !== 0 && Date.now() - attemptStartedAt < RETRY_WINDOW_MS && attemptError?.retryable === true;
-        if (fastTransient && !state.cancelled && !state.timedOut && !state.finishedByGrace && retries < retryLimit) {
+        // A stall can never fit the fast-retry window (it takes minutes), so it re-arms the clock and retries on its own.
+        if ((fastTransient || state.stalled) && !state.cancelled && !state.timedOut && !state.finishedByGrace && retries < retryLimit) {
           retries += 1;
           state.delivered = false;
           state.deliveredAt = null;
           state.hasFinalMessage = false;
           state.lastText = '';
+          state.stalled = false;
           clearTimeout(state.graceTimer);
           flushCheckpoint();
           store.update(id, { retries, delivered: false, deliveredAt: null, hasFinalMessage: false });
+          lastActivityAt = Date.now();
+          lastStamp = logStamp();
           beginAttempt();
           return;
         }
@@ -269,6 +297,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
   function finalize(id, meta, state, r, worker, timeoutMin) {
     clearTimeout(state.timer);
     clearTimeout(state.graceTimer);
+    clearTimeout(state.stallTimer);
     live.delete(id);
     const dir = store.jobDir(id);
     let text = lastMessage(id);
@@ -280,6 +309,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     if (state.cancelled) patch.state = 'cancelled';
     else if (state.finishedByGrace) Object.assign(patch, { state: 'done', finishedByGrace: true, message: state.message });
     else if (state.timedOut) Object.assign(patch, { state: 'failed', error: `timeout tras ${timeoutMin} min` });
+    else if (state.stalled) Object.assign(patch, { state: 'failed', error: state.stallError });
     else if (r.code === 0) patch.state = 'done';
     else if (state.adopted && r.code == null) Object.assign(patch, { state: 'orphaned', error: `el proceso terminó sin una entrega confirmada${r.stderrTail ? `: ${r.stderrTail}` : ''}`.slice(0, 1500) });
     else Object.assign(patch, {
@@ -467,7 +497,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
         });
         restoreReservation();
         ensureFinished(m.id);
-        queue.push({ id: m.id, prompt: savedPrompt, worker, timeoutMin: m.timeoutMin ?? config.timeoutMin, exitGraceS: m.exitGraceS ?? config.exitGraceS });
+        queue.push({ id: m.id, prompt: savedPrompt, worker, timeoutMin: m.timeoutMin ?? config.timeoutMin, exitGraceS: m.exitGraceS ?? config.exitGraceS, stallMin: m.stallMin ?? config.stallTimeoutMin });
         continue;
       }
       let adapter;
@@ -504,6 +534,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     for (const state of live.values()) {
       clearTimeout(state.timer);
       clearTimeout(state.graceTimer);
+      clearTimeout(state.stallTimer);
       state.flushCheckpoint?.();
       state.handle.detach?.();
     }
