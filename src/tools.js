@@ -231,6 +231,13 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
     if (!a.job_id && !a.cwd) throw new Error('indica job_id o cwd');
     return { job_id: jm.review({ id: a.job_id, cwd: a.cwd, focus: a.focus }) };
   });
+  tool('verdict', 'Registra el veredicto humano del orquestador sobre un job ya revisado con review/diff: accepted o needs_work. Solo esta llamada lo cambia; no se infiere del estado done. stats lo separa por worker.',
+    {
+      job_id: z.string(),
+      verdict: z.enum(['accepted', 'needs_work']).describe('accepted: el resultado satisface el brief | needs_work: requiere correcciones'),
+      note: z.string().optional().describe('Motivo corto del veredicto'),
+    },
+    a => jm.verdict(a.job_id, { verdict: a.verdict, note: a.note }));
   tool('cancel', 'Cancela un job (mata el árbol de procesos).', { job_id: z.string() }, a => jm.cancel(a.job_id));
 
   tool('merge', 'Fusiona la rama colmena/<id> del job en la rama actual de su cwd. Manual: revisa antes con diff/review. Se niega si el destino tiene cambios sin commitear.',
