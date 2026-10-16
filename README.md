@@ -48,6 +48,7 @@ standards:
 
 Notas:
 - `standards.enabled` activa el preámbulo de trabajo para `run` (TDD, código limpio/DRY, reutilización, evidencia y formato de reporte). Los helpers `summarize`, `compact`, `review` y `report` no lo reciben. Edita el YAML y llama a `reload_config` para aplicar workers, roles, defaults y plugins sin reiniciar; `COLMENA_MAX_PARALLEL` y `COLMENA_JOB_TIMEOUT_MIN` conservan prioridad sobre el YAML.
+- `stats {since_days?}` resume jobs, éxito, duración, costo, tokens, workers, tipos y fallos de la ventana indicada (30 días por defecto).
 - `effort` se pasa como `model_reasoning_effort` (Codex) o `--variant` (OpenCode).
 - OpenCode informa el costo en USD de cada ejecución. **Codex no**: para contabilizarlo añade `price_per_mtok: {input: …, output: …}` al worker.
 - El saldo real de tus cuentas no se puede consultar por API: el presupuesto es **declarativo + conteo local** (`usage.json`).
@@ -68,6 +69,7 @@ Notas:
 | Tool | Para qué |
 |---|---|
 | `workers` | Workers con prioridad, fortalezas, gasto del mes, restante y disponibilidad |
+| `stats` | Resumen histórico por estado, worker y tipo (`since_days`, defecto 30) |
 | `reload_config` | Relee y valida `colmena.yml`; jobs posteriores usan los cambios sin reiniciar |
 | `run` / `run_many` | Lanza uno o varios agentes (`worker?`, `kind?`, `isolation?`, `wait: true` espera el reporte) |
 | `wait`, `status`, `list` | Seguimiento (`wait` máx. 600 s, `mode: any|all`) |
@@ -91,7 +93,7 @@ Con `plugins.notify` activo recibes un toast de Windows agrupado al lanzar agent
 Un estilo es una carpeta `styles/<nombre>/` con `style.md` (instrucciones para el agente reportero) y `template.html` (plantilla con marcadores `{{title}}`, `{{jobs}}`… y `<!--COLMENA:CARDS-->`). Se buscan primero en `~/.colmena/styles/` y luego en el repo. Si el reportero falla, un renderizador determinista rellena la plantilla (`usedFallback: true`). Incluido: **papercraft**.
 
 ## Seguridad
-Los agentes corren **sin sandbox ni aprobaciones** (Codex: `--dangerously-bypass-approvals-and-sandbox`; OpenCode: `--auto`). Con `inplace` un agente puede modificar o borrar cualquier archivo accesible a tu usuario. Por eso `worktree` es el valor por defecto en repos git, `merge` nunca se ejecuta solo, `cleanup` solo toca `colmena/*` bajo `COLMENA_HOME/worktrees`, el YAML no admite flags arbitrarios y cada lanzamiento queda en `audit.log`. `readonly` es real: `-s read-only` en Codex y `--agent plan` en OpenCode (verificado). Úsalo solo en repos y máquinas de confianza.
+Los agentes tienen internet por defecto: Codex con `--search` y OpenCode con `webfetch`; el preámbulo les pide consultar documentación y versiones actuales cuando dependan de una API o dato externo y citar la fuente. También corren **sin sandbox ni aprobaciones** (Codex: `--dangerously-bypass-approvals-and-sandbox`; OpenCode: `--auto`). Con `inplace` un agente puede modificar o borrar cualquier archivo accesible a tu usuario. Por eso `worktree` es el valor por defecto en repos git, `merge` nunca se ejecuta solo, `cleanup` solo toca `colmena/*` bajo `COLMENA_HOME/worktrees`, el YAML no admite flags arbitrarios y cada lanzamiento queda en `audit.log`. `readonly` es real: `-s read-only` en Codex y `--agent plan` en OpenCode (verificado). Úsalo solo en repos y máquinas de confianza.
 
 ## Desarrollo
 `npm test` usa proveedores falsos (`test/fake-codex.js`, `test/fake-opencode.js`) y repos git temporales; no gasta llamadas reales.

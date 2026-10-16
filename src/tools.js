@@ -7,6 +7,7 @@ import * as iso from './isolation.js';
 import { notifyPlugin } from './plugins/notify.js';
 import { createNotifier } from './notifier.js';
 import { generateReport } from './plugins/report.js';
+import { computeStats, DAY_MS } from './stats.js';
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
 const isolationEnum = z.enum(['worktree', 'inplace', 'readonly']).optional()
@@ -100,6 +101,12 @@ export function buildServer(config) {
 
   tool('status', 'Estado de un job.', { job_id: z.string() }, a => jm.status(a.job_id));
   tool('list', 'Lista jobs recientes.', { state: z.string().optional(), limit: z.number().optional() }, a => jm.list({ state: a.state, limit: a.limit ?? 15 }));
+  tool('stats', 'Resume el uso de colmena por worker, tipo de job, estado, duración, costo, tokens y fallos.',
+    { since_days: z.number().nonnegative().optional().default(30).describe('Ventana histórica en días; defecto: 30') },
+    ({ since_days }) => {
+      const now = Date.now();
+      return computeStats(jm.metas(), { sinceMs: now - since_days * DAY_MS, now });
+    });
   tool('wait', 'Espera a uno o todos los jobs (máx 600 s) y devuelve reportes compactos.',
     { job_ids: z.array(z.string()).min(1), timeout_s: z.number().optional(), mode: z.enum(['any', 'all']).optional() },
     a => jm.wait(a.job_ids, { mode: a.mode ?? 'all', timeoutS: a.timeout_s ?? 120 }));

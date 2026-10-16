@@ -28,7 +28,7 @@ async function connect(extraEnv = {}) {
   return { client, call };
 }
 
-const NAMES = ['workers', 'report', 'reload_config', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'cancel', 'merge', 'cleanup'];
+const NAMES = ['workers', 'report', 'reload_config', 'stats', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'cancel', 'merge', 'cleanup'];
 
 test('workers + report tools end to end', async () => {
   const { client, call } = await connect();
@@ -53,6 +53,23 @@ test('lists all tools; no model/effort knobs', async () => {
       const props = Object.keys(t.inputSchema.properties ?? {});
       assert.ok(!props.includes('model') && !props.includes('effort') && !props.includes('reasoning_effort'), t.name);
     }
+  } finally { await client.close(); }
+});
+
+test('stats MCP tool aggregates complete metadata from finished jobs', async () => {
+  const { client, call } = await connect();
+  try {
+    const run = await call('run', { task: 'hola', cwd: tmp('luna-stats-'), wait: true });
+    assert.equal(run.state, 'done');
+
+    const stats = await call('stats', {});
+    assert.equal(stats.totals.jobs, 1);
+    assert.equal(stats.totals.done, 1);
+    assert.equal(stats.byWorker['luna-max'].runs, 1);
+    assert.equal(stats.byWorker['luna-max'].done, 1);
+    assert.equal(stats.byKind.run.runs, 1);
+    assert.equal(typeof stats.range.since, 'string');
+    assert.equal(typeof stats.range.until, 'string');
   } finally { await client.close(); }
 });
 
