@@ -23,6 +23,27 @@ const mk = (env = {}) => {
   return { jm: createJobManager(config), config };
 };
 const S = (task, extra = {}) => ({ task, cwd: tmp('luna-cwd-'), isolation: 'inplace', ...extra });
+async function until(predicate, message = 'condition should become true', timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(predicate(), message);
+}
+function seedRunning(config, { id = 'recovered', delivered = false, stderr = '', owner = Number.MAX_SAFE_INTEGER, pid = Number.MAX_SAFE_INTEGER } = {}) {
+  const dir = path.join(config.jobsDir, id);
+  fs.mkdirSync(dir, { recursive: true });
+  const workerConfig = { ...config.settings.workers['luna-max'], name: 'luna-max' };
+  fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({
+    id, state: 'running', kind: 'run', task: 'job previo', cwd: tmp('luna-recover-cwd-'), workdir: tmp('luna-recover-work-'),
+    readonly: true, worker: 'luna-max', workerConfig, provider: 'codex', model: workerConfig.model, effort: workerConfig.effort,
+    createdAt: Date.now() - 1000, startedAt: Date.now() - 500, timeoutMin: 60, exitGraceS: 20,
+    owner, pid, delivered, hasFinalMessage: delivered, deliveredAt: delivered ? Date.now() - 100 : undefined,
+    usage: delivered ? { input_tokens: 2, output_tokens: 3 } : {}, logOffset: 0,
+  }));
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), '');
+  fs.writeFileSync(path.join(dir, 'stderr.log'), stderr);
+  if (delivered) fs.writeFileSync(path.join(dir, 'last_message.md'), 'RESULT: recuperado\nFILES: ninguno\nTESTS: 1/1\nRISKS: ninguno');
+  return id;
+}
 
 test('submit → done with ok report', async () => {
   const { jm } = mk();
@@ -215,6 +236,128 @@ test('recoverOrphans marks stale running jobs', () => {
   fs.writeFileSync(path.join(config.jobsDir, 'old1', 'meta.json'), JSON.stringify({ id: 'old1', state: 'running', createdAt: 1 }));
   jm.recoverOrphans();
   assert.equal(jm.status('old1').state, 'orphaned');
+});
+test('manager B adopts a live job after manager A releases its readers', async () => {
+  const previousDelay = process.env.FAKE_DELAY;
+  process.env.FAKE_DELAY = '500';
+  try {
+    const home = codexOnlyHome();
+    const env = baseEnv(home);
+    const configA = getConfig(env);
+    configA.settings.workers['luna-max'].price_per_mtok = { input: 100, output: 200 };
+    const jmA = createJobManager(configA);
+    const cwd = repo();
+    const id = jmA.submit({ task: 'EDIT', cwd, isolation: 'worktree' });
+    await until(() => (jmA.meta(id).logOffset ?? 0) > 0, 'manager A should persist a log offset');
+
+    jmA.shutdown();
+    jmA.mark(id, { owner: 2147483647 });
+    const configB = getConfig(env);
+    configB.settings.workers['luna-max'].price_per_mtok = { input: 100, output: 200 };
+    const jmB = createJobManager(configB);
+    const started = [];
+    const events = [];
+    jmB.bus.on('job.started', event => started.push(event));
+    jmB.bus.on('job.finished', event => events.push(event));
+    jmB.recoverOrphans();
+
+    assert.equal(jmB.status(id).state, 'running');
+    assert.equal(jmB.meta(id).adopted, true);
+    await jmB.wait([id], { timeoutS: 10 });
+    const result = jmB.result(id);
+    assert.equal(result.state, 'done');
+    assert.match(result.report.RESULT, /^ok/);
+    assert.equal(jmB.meta(id).usage.input_tokens, 10);
+    assert.equal(jmB.meta(id).costUsd, 0.002);
+    assert.deepEqual(result.files, ['edited.txt']);
+    assert.equal(started.length, 1);
+    assert.equal(started[0].adopted, true);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].state, 'done');
+  } finally {
+    if (previousDelay === undefined) delete process.env.FAKE_DELAY;
+    else process.env.FAKE_DELAY = previousDelay;
+  }
+});
+test('a dead process with a persisted delivery finalizes as done', async () => {
+  const config = getConfig(baseEnv(codexOnlyHome()));
+  const jm = createJobManager(config);
+  const id = seedRunning(config, { delivered: true });
+  jm.recoverOrphans();
+  await jm.wait([id], { timeoutS: 3 });
+  assert.equal(jm.result(id).state, 'done');
+  assert.match(jm.result(id).report.RESULT, /recuperado/);
+  assert.equal(jm.meta(id).usage.output_tokens, 3);
+});
+test('a dead process without a delivery is orphaned with stderr', async () => {
+  const config = getConfig(baseEnv(codexOnlyHome()));
+  const jm = createJobManager(config);
+  const id = seedRunning(config, { id: 'lost', stderr: 'provider crashed\n' });
+  jm.recoverOrphans();
+  await jm.wait([id], { timeoutS: 3 });
+  assert.equal(jm.result(id).state, 'orphaned');
+  assert.match(jm.result(id).error, /provider crashed/);
+});
+test('an owner that is still alive keeps its running job untouched', () => {
+  const config = getConfig(baseEnv(codexOnlyHome()));
+  const jm = createJobManager(config);
+  const id = seedRunning(config, { id: 'owned', owner: process.pid });
+  jm.recoverOrphans();
+  assert.equal(jm.status(id).state, 'running');
+  assert.equal(jm.meta(id).adopted, undefined);
+});
+test('cancelling an adopted job kills its detached process tree', async () => {
+  const home = codexOnlyHome();
+  const env = baseEnv(home);
+  const jmA = createJobManager(getConfig(env));
+  const id = jmA.submit(S('SLEEP'));
+  await until(() => (jmA.meta(id).logOffset ?? 0) > 0, 'job should have written provider events');
+  const pid = jmA.meta(id).pid;
+  jmA.shutdown();
+  jmA.mark(id, { owner: Number.MAX_SAFE_INTEGER });
+
+  const jmB = createJobManager(getConfig(env));
+  jmB.recoverOrphans();
+  await jmB.cancel(id);
+  await jmB.wait([id], { timeoutS: 10 });
+  assert.equal(jmB.result(id).state, 'cancelled', JSON.stringify(jmB.meta(id)));
+  assert.throws(() => process.kill(pid, 0));
+});
+test('an adopted job keeps only the timeout remaining since it started', async () => {
+  const home = codexOnlyHome();
+  const env = baseEnv(home, { COLMENA_JOB_TIMEOUT_MIN: '0.05' });
+  const jmA = createJobManager(getConfig(env));
+  const id = jmA.submit(S('SLEEP'));
+  await until(() => (jmA.meta(id).logOffset ?? 0) > 0, 'job should have written provider events');
+  await new Promise(resolve => setTimeout(resolve, 1700));
+  jmA.shutdown();
+  jmA.mark(id, { owner: Number.MAX_SAFE_INTEGER });
+
+  const jmB = createJobManager(getConfig(env));
+  jmB.recoverOrphans();
+  const resumedAt = Date.now();
+  await jmB.wait([id], { timeoutS: 5 });
+  assert.equal(jmB.result(id).state, 'failed');
+  assert.match(jmB.result(id).error, /timeout/i);
+  assert.ok(Date.now() - resumedAt < 2300, 'the restarted timer should use the remaining timeout');
+});
+test('an adopted delivered job resumes its remaining exit grace period', async () => {
+  const home = codexOnlyHome();
+  const env = baseEnv(home, { COLMENA_EXIT_GRACE_S: '0.5' });
+  const jmA = createJobManager(getConfig(env));
+  const id = jmA.submit(S('LINGER'));
+  await until(() => jmA.meta(id).delivered, 'manager A should persist delivery before shutdown');
+  await new Promise(resolve => setTimeout(resolve, 180));
+  jmA.shutdown();
+  jmA.mark(id, { owner: Number.MAX_SAFE_INTEGER });
+
+  const jmB = createJobManager(getConfig(env));
+  jmB.recoverOrphans();
+  const resumedAt = Date.now();
+  await jmB.wait([id], { timeoutS: 5 });
+  assert.equal(jmB.result(id).state, 'done');
+  assert.equal(jmB.meta(id).finishedByGrace, true);
+  assert.ok(Date.now() - resumedAt < 800, 'the restarted grace timer should use its remaining duration');
 });
 test('tokens: min result is compact', async () => {
   const { jm } = mk(); const id = jm.submit(S('hola')); await jm.wait([id]);

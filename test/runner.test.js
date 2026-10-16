@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getConfig } from '../src/config.js';
-import { startRun } from '../src/runner.js';
+import { attachRun, startRun } from '../src/runner.js';
 import { getAdapter } from '../src/providers/index.js';
 
 const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-codex.js');
@@ -74,6 +74,39 @@ test('startRun with fake: events, exit 0, -o file, log', async () => {
   assert.match(fs.readFileSync(path.join(dir, 'last.md'), 'utf8'), /RESULT/);
   assert.ok(fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').includes('thread.started'));
 });
+test('attachRun follows appended JSONL from a byte offset and holds partial lines', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-attach-'));
+  const logPath = path.join(dir, 'events.jsonl');
+  const first = Buffer.from('{"value":1}\n');
+  fs.writeFileSync(logPath, Buffer.concat([first, Buffer.from('{"value":')]));
+  const events = [];
+  let alive = true;
+  const handle = attachRun({
+    pid: process.pid,
+    logPath,
+    offset: 0,
+    parseLine: line => JSON.parse(line),
+    onEvent: (event, offset) => events.push({ event, offset }),
+    isAlive: () => alive,
+    pollIntervalMs: 10,
+    isDelivered: () => true,
+  });
+  const until = async predicate => {
+    const deadline = Date.now() + 1500;
+    while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(predicate(), 'condition should become true');
+  };
+
+  await until(() => events.length === 1);
+  assert.deepEqual(events[0], { event: { value: 1 }, offset: first.length });
+  assert.equal(events.length, 1);
+
+  fs.appendFileSync(logPath, '2}\n');
+  await until(() => events.length === 2);
+  assert.deepEqual(events[1], { event: { value: 2 }, offset: fs.statSync(logPath).size });
+  alive = false;
+  assert.equal((await handle.done).code, 0);
+});
 test('startRun merges optional env into the child process environment', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-env-'));
   const previous = process.env.COLMENA_RUNNER_INHERITED;
@@ -98,6 +131,7 @@ test('startRun FAIL → code 1 + stderr tail', async () => {
   const r = await run(c, dir, 'FAIL').done;
   assert.equal(r.code, 1);
   assert.match(r.stderrTail, /boom/);
+  assert.match(fs.readFileSync(path.join(dir, 'stderr.log'), 'utf8'), /boom/);
 });
 test('kill ends a hanging process', async () => {
   const c = cfg(); const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-w-'));

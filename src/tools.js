@@ -72,9 +72,9 @@ const taskShape = {
 
 export function buildServer(config, { atomicWriteDependencies } = {}) {
   const jm = createJobManager(config);
-  jm.recoverOrphans();
   const nc = config.settings.plugins.notify;
   const notify = notifyPlugin({ bus: jm.bus, jm, cfg: nc, notifier: createNotifier(config.notifier), logPath: config.activityPath });
+  jm.recoverOrphans();
   const server = new McpServer({ name: 'colmena', version: '0.2.0' });
 
   const ok = obj => ({ content: [{ type: 'text', text: JSON.stringify(obj) }] });

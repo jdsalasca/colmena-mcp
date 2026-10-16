@@ -16,6 +16,16 @@ import { baseEnv, codexOnlyHome } from './helpers.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
+function repo() {
+  const cwd = tmp('colmena-restart-repo-');
+  git(cwd, 'init', '-q', '-b', 'main');
+  git(cwd, 'config', 'user.email', 't@t');
+  git(cwd, 'config', 'user.name', 't');
+  fs.writeFileSync(path.join(cwd, 'initial.txt'), 'initial\n');
+  git(cwd, 'add', '-A');
+  git(cwd, 'commit', '-qm', 'initial');
+  return cwd;
+}
 
 async function connect(extraEnv = {}) {
   const transport = new StdioClientTransport({
@@ -91,6 +101,41 @@ test('lists all tools; no model/effort knobs', async () => {
       assert.ok(!props.includes('model') && !props.includes('effort') && !props.includes('reasoning_effort'), t.name);
     }
   } finally { await client.close(); }
+});
+test('a running MCP job survives client close and finishes after server restart', async () => {
+  const home = codexOnlyHome();
+  const first = await connect({ COLMENA_HOME: home, FAKE_DELAY: '900' });
+  const started = await first.call('run', { task: 'EDIT tras reinicio', cwd: repo(), isolation: 'worktree' });
+  assert.equal(started.state, 'running');
+  await first.client.close();
+
+  const second = await connect({ COLMENA_HOME: home, FAKE_DELAY: '900' });
+  try {
+    const waited = await second.call('wait', { job_ids: [started.job_id], timeout_s: 10 });
+    assert.equal(waited.done[0].state, 'done');
+    const result = await second.call('result', { job_id: started.job_id });
+    assert.match(result.report.RESULT, /^ok/);
+    assert.deepEqual(result.files, ['edited.txt']);
+  } finally { await second.client.close(); }
+});
+test('reload_config can restore cancellation on server shutdown', async () => {
+  const home = codexOnlyHome();
+  const file = path.join(home, 'colmena.yml');
+  const first = await connect({ COLMENA_HOME: home });
+  const started = await first.call('run', { task: 'SLEEP hasta cerrar el servidor', cwd: tmp('colmena-shutdown-'), isolation: 'inplace' });
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(
+    'defaults: {worker: luna-max}',
+    'defaults: {worker: luna-max, cancel_jobs_on_shutdown: true}',
+  ));
+  const diff = await first.call('reload_config', {});
+  assert.ok(diff.defaults.includes('cancel_jobs_on_shutdown'));
+  await first.client.close();
+
+  const second = await connect({ COLMENA_HOME: home });
+  try {
+    const result = await second.call('result', { job_id: started.job_id });
+    assert.equal(result.state, 'cancelled');
+  } finally { await second.client.close(); }
 });
 
 test('stats MCP tool applies since_days to persisted jobs', async () => {

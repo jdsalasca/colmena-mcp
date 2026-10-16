@@ -53,6 +53,7 @@ defaults:
   max_parallel: 4
   timeout_min: 60
   exit_grace_s: 20  # tras entrega final de Codex, espera antes de matar el proceso colgado
+  cancel_jobs_on_shutdown: false  # true cancela jobs queued/running al cerrar el servidor MCP
 
 plugins:
   notify:
