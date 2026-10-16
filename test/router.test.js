@@ -8,7 +8,7 @@ import { createLedger } from '../src/ledger.js';
 import { pickWorker, workerStatus } from '../src/router.js';
 import { loadSettings } from '../src/settings.js';
 import { computeStats } from '../src/stats.js';
-import { baseEnv, tmp, fakeOpencode } from './helpers.js';
+import { baseEnv, tmp, fakeOpencode, until } from './helpers.js';
 
 const settingsFor = yml => { const h = tmp('colmena-rt-'); fs.writeFileSync(path.join(h, 'colmena.yml'), yml); return loadSettings(h, {}); };
 const YML = `
@@ -238,6 +238,42 @@ plugins: {notify: {enabled: false}}
     assert.equal(jm.workers().find(r => r.alias === 'capped').reserved_usd, 0);
   } finally {
     await cancelAll(jm);
+    delete process.env.FAKE_DELAY;
+  }
+});
+
+test('MC-2: un job adoptado conserva su reserva (o la restaura si se perdió) y la libera al terminar', async () => {
+  process.env.FAKE_DELAY = '500';
+  let jmB;
+  try {
+    const home = tmp('colmena-res-adopt-');
+    fs.writeFileSync(path.join(home, 'colmena.yml'), `
+workers:
+  capped: {provider: opencode, model: m, budget: {monthly_usd: 0.05}, reserve_usd: 0.02}
+roles: {reporter: capped, summarizer: capped, reviewer: capped, presenter: capped}
+defaults: {worker: capped}
+plugins: {notify: {enabled: false}}
+`);
+    const env = { ...baseEnv(home), COLMENA_OPENCODE_BIN: fakeOpencode };
+    const configA = getConfig(env);
+    const jmA = createJobManager(configA);
+    const id = jmA.submit({ task: 'hola', cwd: tmp('colmena-res-c-'), isolation: 'inplace' });
+    await until(() => (jmA.meta(id).logOffset ?? 0) > 0, 'manager A should persist a log offset');
+    jmA.shutdown();
+    jmA.mark(id, { owner: Number.MAX_SAFE_INTEGER });
+    fs.writeFileSync(configA.usagePath, JSON.stringify({}), 'utf8'); // simula un crash que perdió la reserva en disco
+
+    jmB = createJobManager(getConfig(env));
+    jmB.recoverOrphans();
+    assert.equal(jmB.meta(id).adopted, true);
+    assert.equal(jmB.workers().find(r => r.alias === 'capped').reserved_usd, 0.02, 'el job adoptado sigue reservando su estimado');
+
+    await jmB.wait([id], { timeoutS: 10 });
+    assert.equal(jmB.result(id).state, 'done');
+    assert.equal(jmB.workers().find(r => r.alias === 'capped').reserved_usd, 0);
+    assert.ok(Math.abs(jmB.workers().find(r => r.alias === 'capped').spent_usd - 0.02) < 1e-9);
+  } finally {
+    await cancelAll(jmB);
     delete process.env.FAKE_DELAY;
   }
 });
