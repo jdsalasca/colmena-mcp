@@ -133,3 +133,47 @@ test('cleanup removes only luna worktrees and branches', () => {
   const branches = git(r, 'branch', '--list');
   assert.ok(!branches.includes('colmena/cl1')); assert.ok(branches.includes('keepme'));
 });
+test('cleanup ignores a junction to an external repo and keeps its branch and files', () => {
+  const c = cfg(); const ext = repo('ext');
+  const extWt = path.join(tmp('luna-ext-'), 'extwt');
+  git(ext, 'worktree', 'add', '-q', '-b', 'colmena/external', extWt);
+  fs.writeFileSync(path.join(extWt, 'work.txt'), 'w\n');
+  git(extWt, 'add', '-A'); git(extWt, 'commit', '-qm', 'external work');
+  fs.mkdirSync(c.worktreesDir, { recursive: true });
+  const link = path.join(c.worktreesDir, 'external-ext');
+  fs.symlinkSync(extWt, link, 'junction');
+
+  const res = iso.cleanup(c, { id: 'ext' });
+
+  assert.match(git(ext, 'branch', '--list', 'colmena/external'), /colmena\/external/);
+  assert.match(git(ext, 'worktree', 'list', '--porcelain'), /extwt/);
+  assert.equal(fs.readFileSync(path.join(extWt, 'work.txt'), 'utf8').trim(), 'w');
+  assert.deepEqual(res.removed, []);
+});
+test('cleanup ignores a checkout whose git common dir points to an external repo', () => {
+  const c = cfg(); const ext = repo('ext');
+  git(ext, 'checkout', '-qb', 'colmena/external');
+  fs.mkdirSync(c.worktreesDir, { recursive: true });
+  const wt = path.join(c.worktreesDir, 'external-ext');
+  fs.mkdirSync(wt);
+  fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${path.join(ext, '.git')}\n`);
+  fs.writeFileSync(path.join(wt, 'keep.txt'), 'keep\n');
+
+  const res = iso.cleanup(c, { id: 'ext' });
+
+  assert.ok(fs.existsSync(path.join(wt, 'keep.txt')));
+  assert.equal(git(ext, 'rev-parse', '--abbrev-ref', 'HEAD'), 'colmena/external');
+  assert.deepEqual(res.removed, []);
+});
+test('cleanup tolerates broken junctions and vanished paths', () => {
+  const c = cfg();
+  const gone = tmp('luna-gone-');
+  fs.mkdirSync(c.worktreesDir, { recursive: true });
+  const link = path.join(c.worktreesDir, 'ghost-gh');
+  fs.symlinkSync(gone, link, 'junction');
+  fs.rmSync(gone, { recursive: true, force: true });
+
+  const res = iso.cleanup(c, { id: 'gh', olderThanDays: 0 });
+
+  assert.deepEqual(res.removed, []);
+});
