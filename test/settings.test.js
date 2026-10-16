@@ -103,6 +103,16 @@ test('invalid OpenCode provider settings identify the field', () => {
   const directory = withYml('providers: {opencode: {config_dir: 7}}\n');
   assert.throws(() => loadSettings(directory.h, directory.env), /providers\.opencode\.config_dir/);
 });
+test('plugins.improve: defaults y override', () => {
+  const s = loadSettings(home(), {});
+  assert.deepEqual(s.plugins.improve, { enabled: true, hints: true });
+  const { h, env } = withYml('plugins: {improve: {enabled: false, hints: false}}\n');
+  assert.deepEqual(loadSettings(h, env).plugins.improve, { enabled: false, hints: false });
+});
+test('invalid plugins.improve identify the field', () => {
+  const { h, env } = withYml('plugins: {improve: {enabled: maybe}}\n');
+  assert.throws(() => loadSettings(h, env), /plugins\.improve\.enabled/);
+});
 test('config: COLMENA_* beats LUNA_*, settings attached, default home', () => {
   const c = getConfig({ COLMENA_HOME: 'C:\\a', LUNA_HOME: 'C:\\b', COLMENA_CODEX_BIN: 'x.js' });
   assert.ok(c.home.endsWith('a'));
