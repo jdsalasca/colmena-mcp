@@ -37,7 +37,20 @@ test('no yml → defaults', () => {
   assert.match(s.standards.preamble, /internet/i);
   assert.match(s.standards.preamble, /webfetch/i);
   assert.match(s.standards.preamble, /fuente/i);
+  assert.match(s.standards.preamble, /No crees archivos de plan, notas, capturas ni temporales dentro del repositorio fuera de los entregables pedidos/);
   assert.deepEqual(DEFAULT_SETTINGS.defaults.max_parallel, 4);
+});
+test('workers admiten free y validan que sea booleano', () => {
+  const { h, env } = withYml(`
+workers:
+  sin-costo: {provider: opencode, model: m, free: true}
+roles: {reporter: sin-costo, summarizer: sin-costo, reviewer: sin-costo}
+defaults: {worker: sin-costo}
+`);
+  assert.equal(loadSettings(h, env).workers['sin-costo'].free, true);
+
+  const invalid = withYml('workers: {x: {provider: codex, model: m, free: "yes"}}\n');
+  assert.throws(() => loadSettings(invalid.h, invalid.env), /workers\.x\.free/);
 });
 test('preferences.provider defaults to auto and accepts both providers', () => {
   for (const provider of ['codex', 'opencode']) {

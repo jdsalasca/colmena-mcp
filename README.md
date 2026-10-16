@@ -2,8 +2,8 @@
 
 Servidor MCP (stdio) para que **Claude Code orqueste y valide, como un product manager**, mientras una colmena de agentes obreros —**Codex** (Luna) y **OpenCode** (DeepSeek, etc.)— hace el trabajo pesado. Tú gastas pocos tokens: briefs cortos de ida, reportes de ≤15 líneas de vuelta.
 
-- **Workers por alias** en un `colmena.yml`: proveedor + modelo + esfuerzo + prioridad + presupuesto. Las herramientas solo aceptan un alias, nunca un modelo o flag libre.
-- **Presupuesto y ruteo:** el servidor cuenta el gasto por worker y por mes; sin `worker` explícito, elige el proveedor preferido disponible y luego aplica `kind` y prioridad.
+- **Workers por alias** en un `colmena.yml`: proveedor + modelo + esfuerzo + prioridad + presupuesto y, opcionalmente, `free: true` para registrar costo cero. Las herramientas solo aceptan un alias, nunca un modelo o flag libre.
+- **Presupuesto y ruteo:** el servidor cuenta el gasto por worker y por mes; un worker `free` conserva el costo nominal aparte y no queda bloqueado por presupuesto. Sin `worker` explícito, elige el proveedor preferido disponible y luego aplica `kind` y prioridad.
 - **Aislamiento por llamada:** `worktree` (rama `colmena/<id>`, por defecto en repos git), `inplace` o `readonly`.
 - **Paralelismo con cola**, sesiones reanudables, resúmenes, compactación y relevo entre agentes.
 - **Plugin `notify`:** toast de Windows al lanzar agentes, latido cada 10 min mientras haya trabajo, y aviso al terminar o fallar.
@@ -57,7 +57,9 @@ providers:
 Notas:
 - `standards.enabled` activa el preámbulo de trabajo para `run` (TDD, código limpio/DRY, reutilización, evidencia y formato de reporte). Los helpers `summarize`, `compact`, `review`, `report` y `present` no lo reciben. Edita el YAML y llama a `reload_config` para aplicar workers, roles, defaults, plugins y proveedores sin reiniciar; `COLMENA_MAX_PARALLEL` y `COLMENA_JOB_TIMEOUT_MIN` conservan prioridad sobre el YAML.
 - `preferences.provider` acepta `auto` (ruteo actual), `codex` u `opencode`. La tool `preferences` consulta la preferencia y el worker elegido ahora, o la cambia en memoria y en el YAML efectivo (`COLMENA_CONFIG` o `$COLMENA_HOME/colmena.yml`) para el siguiente `run`; no requiere reinicio. Si no hay workers disponibles de ese proveedor, el router usa otro y devuelve un `note`. `worker` explícito siempre manda; las tools auxiliares continúan usando sus roles.
-- `stats {since_days?}` resume jobs, éxito, duración, costo, tokens, workers, tipos y fallos de la ventana indicada (30 días por defecto).
+- `workers` muestra `free` por worker; `stats {since_days?}` resume jobs, éxito, duración, costo registrado y `nominalCostUsd` por worker, tokens, tipos y fallos de la ventana indicada (30 días por defecto).
+- `workers.<alias>.free: true` declara que el modelo de ese worker está cubierto a costo cero: el ledger registra `cost_usd: 0`, `meta.json` conserva `nominalCostUsd` y `result` muestra `cost_usd: 0` junto con `nominal_cost_usd`. El flag exime al worker de su presupuesto mensual. Úsalo solo si tu plan garantiza el costo cero; el costo nominal sigue visible para auditar lo que reportó el proveedor.
+- `meta.json`, `status` y `result` conservan `model`, `provider` y `effort` del worker seleccionados al crear cada job, aunque la configuración se recargue después.
 - `effort` se pasa como `model_reasoning_effort` (Codex) o `--variant` (OpenCode).
 - `providers.opencode.isolate_config` está activo por defecto: OpenCode usa `$COLMENA_HOME/opencode-config` como `XDG_CONFIG_HOME`. Así no hereda los servidores MCP, plugins, agentes, `AGENTS.md` ni skills de la configuración global del usuario; los estándares de Colmena llegan por el preámbulo. La autenticación se conserva en `XDG_DATA_HOME`. Define `config_dir` para usar una configuración mínima propia (la carpeta se crea si falta), o `isolate_config: false` para volver a usar la configuración habitual.
 - Evidencia de la comparación reportada para una ejecución trivial: el contexto de entrada bajó de ~47k a ~8k tokens; `opencode-go/deepseek-v4.1-flash` bajó de $0.0074 a $0.0011 por ejecución; y `opencode-go/cat-jam-free`, que fallaba globalmente con `maximum number of items is 128`, respondió con costo reportado `0`. La configuración global también hizo que un job usara `chatgpt-coordinator` durante más de 10 minutos y se observó `ProviderHeaderTimeoutError` en `step-5-preview`.
@@ -69,7 +71,7 @@ Notas:
 ### max-hive: maximizar tareas en paralelo a costo ~0
 `max-hive` es el worker para **maximizar muchas tareas pequeñas en paralelo con costo cercano a cero** (tests masivos, generación repetitiva, migraciones mecánicas, auditorías por archivo, borradores). Usa un modelo **"contributor"** del plan Go: sin *zero data retention* (no le mandes secretos ni código sensible) y con calidad menor que `luna-max`, así que **lo que produce lo valida el orquestador** (`review`/`diff`) antes de fusionar. Tiene prioridad 9 y fortaleza `bulk`: el router solo lo elige si lo pides (`worker: "max-hive"` o `kind: "bulk"`) o si no queda otro disponible.
 - **Evita los modelos `-free`:** traen cuota; `max-hive` busca modelos *contributor* del plan Go.
-- **Costo ~0 no es verificable desde aquí:** OpenCode reporta un costo nominal por ejecución (≈ $0.004 con `muse-spark-1.3-contributor`; `gemini-4-argon-contributor` ≈ $0.16, ¡caro!). Si tu plan Go lo cubre es cosa de tu cuenta; por eso `max-hive` lleva un tope de seguridad (`budget.monthly_usd`) que el contador local respeta.
+- **Costo ~0 no es verificable desde aquí:** OpenCode reporta un costo nominal por ejecución (≈ $0.004 con `muse-spark-1.3-contributor`; `gemini-4-argon-contributor` ≈ $0.16, ¡caro!). Si tu plan Go cubre un modelo a costo cero, añade `free: true` a ese worker: Colmena registrará costo `0`, preservará el nominal reportado y no lo bloqueará por presupuesto. Esto refleja tu declaración local, no verifica la factura real de tu cuenta. `max-hive` mantiene su tope de seguridad mientras no se marque `free`.
 - **Cómo buscarle otro modelo (para Claude):** `node scripts/opencode-models.mjs --contributor` lista los *contributor* del más barato al más caro; `--max-out 0.6 --json` filtra por precio. Elige el más barato con ventana de contexto suficiente, cambia `model`/`effort` en `colmena.yml` (si no ofrece `max`, usa su mejor variante), llama `reload_config`, y valídalo con una ejecución real (`run` con `worker: "max-hive"`, `isolation: "readonly"`) revisando `cost_usd` y que el reporte salga en formato RESULT/FILES/TESTS/RISKS.
 
 ### Variables de entorno
@@ -85,7 +87,7 @@ Notas:
 | `reload_config` | Relee y valida `colmena.yml`; jobs posteriores usan los cambios sin reiniciar |
 | `run` / `run_many` | Lanza uno o varios agentes (`worker?`, `kind?`, `isolation?`, `wait: true` espera el reporte) |
 | `wait`, `status`, `list` | Seguimiento (`wait` máx. 600 s, `mode: any/all`; añade `hint` de mejora continua al cerrar una ronda) |
-| `result` | Reporte `RESULT/FILES/TESTS/RISKS`, archivos, diffstat, rama, worker y costo |
+| `result` | Reporte `RESULT/FILES/TESTS/RISKS`, archivos, diffstat, rama, worker, modelo, proveedor, esfuerzo y costos registrado/nominal |
 | `diff` | Diff truncado; el completo queda en disco |
 | `continue` | Reanuda la sesión (mismo worker y workdir) |
 | `summarize`, `compact` | Resumen / brief de relevo de una sesión (rol `summarizer`) |

@@ -7,6 +7,7 @@ import { createJobManager } from '../src/jobs.js';
 import { createLedger } from '../src/ledger.js';
 import { pickWorker, workerStatus } from '../src/router.js';
 import { loadSettings } from '../src/settings.js';
+import { computeStats } from '../src/stats.js';
 import { baseEnv, tmp, fakeOpencode } from './helpers.js';
 
 const settingsFor = yml => { const h = tmp('colmena-rt-'); fs.writeFileSync(path.join(h, 'colmena.yml'), yml); return loadSettings(h, {}); };
@@ -104,4 +105,40 @@ plugins: {notify: {enabled: false}}
   const rows = jm.workers();
   assert.equal(rows.find(r => r.alias === 'cheap').available, false);
   assert.ok(rows.find(r => r.alias === 'cheap').spent_usd >= 0.02);
+});
+
+test('worker free registra cero, conserva costo nominal y nunca se bloquea por presupuesto', async () => {
+  const home = tmp('colmena-free-');
+  fs.writeFileSync(path.join(home, 'colmena.yml'), `
+workers:
+  gratis: {provider: opencode, model: cat-jam-free, effort: high, priority: 1, budget: {monthly_usd: 0.001}, free: true}
+  backup: {provider: opencode, model: m, priority: 2}
+roles: {reporter: backup, summarizer: backup, reviewer: backup, presenter: backup}
+defaults: {worker: gratis}
+plugins: {notify: {enabled: false}}
+`);
+  const config = getConfig({ ...baseEnv(home), COLMENA_OPENCODE_BIN: fakeOpencode });
+  const month = new Date().toISOString().slice(0, 7);
+  fs.writeFileSync(config.usagePath, JSON.stringify({
+    [month]: { gratis: { runs: 1, input_tokens: 0, output_tokens: 0, cost_usd: 1 } },
+  }));
+  const jm = createJobManager(config);
+  const id = jm.submit({ task: 'gratis', cwd: tmp('colmena-free-c-'), isolation: 'inplace', worker: 'gratis' });
+  await jm.wait([id]);
+
+  const meta = jm.meta(id);
+  const result = jm.result(id);
+  const row = jm.workers().find(worker => worker.alias === 'gratis');
+  assert.equal(meta.costUsd, 0);
+  assert.equal(meta.nominalCostUsd, 0.02);
+  assert.equal(result.cost_usd, 0);
+  assert.equal(result.nominal_cost_usd, 0.02);
+  assert.equal(row.free, true);
+  assert.equal(row.spent_usd, 1);
+  assert.equal(row.available, true);
+  const ledger = JSON.parse(fs.readFileSync(config.usagePath, 'utf8'))[month].gratis;
+  assert.equal(ledger.runs, 2);
+  assert.equal(ledger.cost_usd, 1);
+  assert.equal(computeStats(jm.metas(), { sinceMs: 0 }).byWorker.gratis.nominalCostUsd, 0.02);
+  assert.equal(pickWorker(loadSettings(home, {}), createLedger(config), { worker: 'gratis' }), 'gratis');
 });

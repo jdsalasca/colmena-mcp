@@ -31,6 +31,16 @@ test('submit → done with ok report', async () => {
   assert.equal(r.state, 'done');
   assert.equal(r.report.RESULT.startsWith('ok'), true);
 });
+test('job conserva modelo, proveedor y esfuerzo en meta, status y result', async () => {
+  const { jm } = mk();
+  const id = jm.submit(S('hola'));
+  const expected = { model: 'gpt-6-luna', provider: 'codex', effort: 'max' };
+
+  assert.deepEqual(Object.fromEntries(Object.keys(expected).map(key => [key, jm.meta(id)[key]])), expected);
+  assert.deepEqual(Object.fromEntries(Object.keys(expected).map(key => [key, jm.status(id)[key]])), expected);
+  await jm.wait([id]);
+  assert.deepEqual(Object.fromEntries(Object.keys(expected).map(key => [key, jm.result(id)[key]])), expected);
+});
 test('never exceeds maxParallel', async () => {
   process.env.FAKE_DELAY = '300';
   try {

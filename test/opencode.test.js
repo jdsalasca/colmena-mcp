@@ -75,6 +75,17 @@ const mk = () => {
 };
 const S = (task, extra = {}) => ({ task, cwd: tmp('colmena-c-'), isolation: 'inplace', ...extra });
 
+test('OpenCode job conserva modelo, proveedor y esfuerzo del worker', async () => {
+  const { jm } = mk();
+  const id = jm.submit(S('metadatos', { worker: 'ds-flash' }));
+  const expected = { model: 'opencode-go/deepseek-v4.1-flash', provider: 'opencode', effort: 'max' };
+
+  assert.deepEqual(Object.fromEntries(Object.keys(expected).map(key => [key, jm.meta(id)[key]])), expected);
+  assert.deepEqual(Object.fromEntries(Object.keys(expected).map(key => [key, jm.status(id)[key]])), expected);
+  await jm.wait([id]);
+  assert.deepEqual(Object.fromEntries(Object.keys(expected).map(key => [key, jm.result(id)[key]])), expected);
+});
+
 test('OpenCode jobs pass the configured XDG_CONFIG_HOME to the fake process', async () => {
   const log = path.join(tmp('colmena-oc-config-log-'), 'fake.log');
   const previousLog = process.env.FAKE_LOG;

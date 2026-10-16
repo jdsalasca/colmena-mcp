@@ -8,8 +8,11 @@ const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
 const numberOrZero = value => Number.isFinite(value) ? value : 0;
 const successRate = (done, terminal) => terminal ? done / terminal : null;
 
-function newGroup() {
-  return { runs: 0, done: 0, failed: 0, terminal: 0, durationS: 0, durationCount: 0, costUsd: 0, inputTokens: 0, outputTokens: 0 };
+function newGroup(includeNominalCost = false) {
+  return {
+    runs: 0, done: 0, failed: 0, terminal: 0, durationS: 0, durationCount: 0, costUsd: 0, inputTokens: 0, outputTokens: 0,
+    ...(includeNominalCost ? { nominalCostUsd: 0 } : {}),
+  };
 }
 
 function addMeta(group, meta, metrics) {
@@ -21,6 +24,7 @@ function addMeta(group, meta, metrics) {
   group.durationS += metrics.durationS;
   if (metrics.durationValid) group.durationCount++;
   group.costUsd += metrics.costUsd;
+  if (Object.hasOwn(group, 'nominalCostUsd')) group.nominalCostUsd += metrics.nominalCostUsd;
   group.inputTokens += numberOrZero(meta.usage?.input_tokens);
   group.outputTokens += numberOrZero(meta.usage?.output_tokens);
 }
@@ -35,6 +39,7 @@ function publicGroup(group) {
     costUsd: group.costUsd,
     inputTokens: group.inputTokens,
     outputTokens: group.outputTokens,
+    ...(Object.hasOwn(group, 'nominalCostUsd') ? { nominalCostUsd: group.nominalCostUsd } : {}),
   };
 }
 
@@ -70,7 +75,7 @@ export function computeStats(metas, { sinceMs = 0, now = Date.now() } = {}) {
 
     const worker = meta.worker ?? 'unknown';
     const kind = meta.kind ?? 'unknown';
-    (byWorker[worker] ??= newGroup());
+    (byWorker[worker] ??= newGroup(true));
     (byKind[kind] ??= newGroup());
     addMeta(byWorker[worker], meta, metrics);
     addMeta(byKind[kind], meta, metrics);

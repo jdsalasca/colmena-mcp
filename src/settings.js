@@ -8,6 +8,7 @@ export const DEFAULT_STANDARDS_PREAMBLE = `## Estándares de trabajo
 - Mantén el código limpio y DRY; busca y reutiliza lo que ya existe antes de escribir helpers o lógica nuevos.
 - Verifica cada resultado con pruebas o comandos y reporta evidencia real; no afirmes éxito sin comprobarlo.
 - Tienes internet por defecto (búsqueda web en vivo / webfetch): consulta documentación y versiones actuales cuando dependas de una API o dato externo, y cita la fuente.
+- No crees archivos de plan, notas, capturas ni temporales dentro del repositorio fuera de los entregables pedidos; usa una carpeta temporal fuera del repo para capturas.
 - Si están disponibles, usa los skills de superpowers para TDD y verificación antes de completar.
 - Respeta el formato obligatorio de reporte RESULT/FILES/TESTS/RISKS incluido al final del brief.`;
 
@@ -18,6 +19,7 @@ const Worker = z.object({
   priority: z.number().default(10),
   strengths: z.array(z.string()).default([]),
   enabled: z.boolean().default(true),
+  free: z.boolean().default(false),
   budget: z.object({ monthly_usd: z.number().positive() }).optional(),
   price_per_mtok: z.object({ input: z.number().nonnegative(), output: z.number().nonnegative() }).optional(),
 });
