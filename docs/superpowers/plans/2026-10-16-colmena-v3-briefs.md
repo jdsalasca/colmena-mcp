@@ -71,3 +71,21 @@ Repo `colmena-mcp` (Node 24 ESM, `node --test`, zod, `@modelcontextprotocol/sdk`
 **Objetivo:** aplicar el skill `superpowers:brainstorming` (si lo tienes) para proponer mejoras a colmena-mcp basadas en **datos reales**. Lee: `README.md`, `src/`, `test/`, los specs/planes en `docs/superpowers/`, y los datos de uso en `~/.colmena/` (`audit.log`, `usage.json`, `jobs/*/meta.json`; ignora jobs de prueba con home temporal). Identifica problemas observados (p. ej. un agente de Codex fusionó a `develop` y borró su worktree por instrucciones globales; cleanup falló al borrar una carpeta en Windows; Codex no reporta costo; wait máximo 10 min vs jobs de 10+ min).
 
 **Entrega (en el mensaje final, ≤15 líneas; no modifiques archivos):** top 8 mejoras priorizadas por (impacto / esfuerzo), cada una con: título, evidencia (dato o archivo concreto), y un brief de 2 líneas listo para delegar con enfoque TDD / código limpio / DRY. Incluye al menos 2 ideas de *nuevas features* y 2 de *deuda técnica*.
+
+---
+
+## Ronda 2 (automejora): Brief F
+
+### Brief F — Aislar la config global de OpenCode en los agentes
+
+**Evidencia (medida el 2026-10-16):** los agentes de OpenCode heredan la config global del usuario (`~/.config/opencode`: 7 servidores MCP, 3 plugins, `default_agent: chatgpt-coordinator`, AGENTS.md y skills). Consecuencias medidas: ~47k tokens de entrada por ejecución trivial (con `XDG_CONFIG_HOME` apuntando a una carpeta vacía: ~8k), `opencode-go/cat-jam-free` falla con `maximum number of items is 128` en `tools`, el job B corre con el agente coordinador del usuario durante 10+ minutos y un job de `step-5-preview` terminó en `ProviderHeaderTimeoutError`. Con config vacía: `cat-jam-free` responde y reporta `cost=0`; `deepseek-v4.1-flash` baja de $0.0074 a $0.0011 por ejecución. La autenticación NO se pierde (vive en `XDG_DATA_HOME`).
+
+**Objetivo:** que los procesos `opencode` que lanza colmena corran con una config global **aislada y mínima** por defecto, configurable.
+
+**Requisitos**
+- `startRun` (`src/runner.js`) acepta `env` opcional que se mezcla sobre `process.env`.
+- Los adaptadores pueden declarar `env(config)`; el de OpenCode devuelve `{XDG_CONFIG_HOME: <COLMENA_HOME>/opencode-config}` y la carpeta se crea si no existe. `src/jobs.js` lo pasa a `startRun` (sin duplicar lógica por proveedor).
+- Nueva sección opcional en `colmena.yml` validada con zod: `providers: {opencode: {isolate_config: true, config_dir: <ruta opcional>}}` (por defecto `isolate_config: true`). Con `false` no se toca el entorno (comportamiento anterior). `config_dir` permite al usuario ofrecer su propia config mínima (por ejemplo con un `opencode.json`). `reload_config` debe recoger los cambios (reutiliza el mecanismo existente).
+- README y `colmena.example.yml`: documenta la opción y la evidencia (números de arriba) y que los agentes de OpenCode ya no ven los MCP/plugins/agentes del usuario (los estándares llegan por el preámbulo).
+
+**Tests primero:** `startRun` pasa `env` al hijo (usa un script fake que imprime la variable); el adaptador de OpenCode expone `env`; con `isolate_config: true` el fake de OpenCode recibe `XDG_CONFIG_HOME` apuntando a la carpeta bajo `COLMENA_HOME` (amplía `test/fake-opencode.js` para registrar esa variable en `FAKE_LOG`), con `false` no la recibe, con `config_dir` recibe esa ruta; validación del YAML (tipos inválidos señalan el campo); el diff de `reload_config` refleja el cambio. Suite completa verde.
