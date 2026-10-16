@@ -29,6 +29,7 @@ const Notify = z.object({
   heartbeat_min: z.number().positive().default(10),
 });
 const Report = z.object({ enabled: z.boolean().default(true), default_style: z.string().default('papercraft') });
+const Improve = z.object({ enabled: z.boolean().default(true), hints: z.boolean().default(true) });
 const Standards = z.object({ enabled: z.boolean().default(true), preamble: z.string().min(1).default(DEFAULT_STANDARDS_PREAMBLE) });
 
 export const DEFAULT_SETTINGS = {
@@ -41,7 +42,7 @@ export const DEFAULT_SETTINGS = {
   },
   roles: { reporter: 'ds-flash', summarizer: 'ds-flash', reviewer: 'luna-max' },
   defaults: { worker: 'luna-max', max_parallel: 4, timeout_min: 60 },
-  plugins: { notify: {}, report: {} },
+  plugins: { notify: {}, report: {}, improve: {} },
   standards: { enabled: true, preamble: DEFAULT_STANDARDS_PREAMBLE },
 };
 
@@ -61,6 +62,7 @@ export function loadSettings(home, env = process.env) {
     plugins: {
       notify: { ...DEFAULT_SETTINGS.plugins.notify, ...(user.plugins?.notify ?? {}) },
       report: { ...DEFAULT_SETTINGS.plugins.report, ...(user.plugins?.report ?? {}) },
+      improve: { ...DEFAULT_SETTINGS.plugins.improve, ...(user.plugins?.improve ?? {}) },
     },
     standards: user.standards == null ? DEFAULT_SETTINGS.standards
       : typeof user.standards === 'object' && !Array.isArray(user.standards)
@@ -70,7 +72,7 @@ export function loadSettings(home, env = process.env) {
   const schema = z.object({
     workers: z.record(z.string(), Worker).refine(w => Object.keys(w).length > 0, 'debe haber al menos un worker'),
     roles: Roles, defaults: Defaults,
-    plugins: z.object({ notify: Notify, report: Report }),
+    plugins: z.object({ notify: Notify, report: Report, improve: Improve }),
     standards: Standards,
   });
   const r = schema.safeParse(merged);
