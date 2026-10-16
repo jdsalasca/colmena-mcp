@@ -95,6 +95,20 @@ export function merge(cwd, branch, strategy = 'merge') {
   return { ok: true, message: `${branch} fusionada` };
 }
 
+// Solo es de Colmena un worktree ligado real: directorio (no enlace) cuyo git-dir
+// vive en <common>/worktrees/ y cuyo HEAD es la rama colmena/<id> del nombre.
+function ownedWorktree(wt, id) {
+  const gitDir = tryGit(wt, 'rev-parse', '--git-dir');
+  const common = tryGit(wt, 'rev-parse', '--git-common-dir');
+  const branch = tryGit(wt, 'rev-parse', '--abbrev-ref', 'HEAD');
+  if (!gitDir.ok || !common.ok || !branch.ok) return null;
+  const commonDir = path.resolve(wt, common.out);
+  if (path.basename(commonDir) !== '.git') return null;
+  if (!path.resolve(wt, gitDir.out).startsWith(path.join(commonDir, 'worktrees') + path.sep)) return null;
+  if (branch.out !== `colmena/${id}`) return null;
+  return { mainRepo: path.dirname(commonDir), branch: branch.out };
+}
+
 export function cleanup(config, { id, olderThanDays } = {}) {
   const removed = [];
   let dirs = [];
@@ -104,14 +118,14 @@ export function cleanup(config, { id, olderThanDays } = {}) {
     const wt = path.resolve(config.worktreesDir, d);
     if (!wt.startsWith(root + path.sep)) continue;
     if (id && !d.endsWith(`-${id}`)) continue;
-    if (olderThanDays != null && Date.now() - fs.statSync(wt).mtimeMs < olderThanDays * 86400000) continue;
-    const branch = tryGit(wt, 'rev-parse', '--abbrev-ref', 'HEAD').out;
-    const common = tryGit(wt, 'rev-parse', '--git-common-dir');
-    const mainRepo = common.ok ? path.dirname(path.resolve(wt, common.out)) : null;
-    if (mainRepo) {
-      tryGit(mainRepo, 'worktree', 'remove', '--force', wt);
-      if (branch.startsWith('colmena/')) tryGit(mainRepo, 'branch', '-D', branch);
-    }
+    const stat = fs.lstatSync(wt, { throwIfNoEntry: false });
+    if (!stat?.isDirectory()) continue;
+    if (olderThanDays != null && Date.now() - stat.mtimeMs < olderThanDays * 86400000) continue;
+    const dirId = d.slice(d.lastIndexOf('-') + 1);
+    const owned = ownedWorktree(wt, dirId);
+    if (!owned) continue;
+    tryGit(owned.mainRepo, 'worktree', 'remove', '--force', wt);
+    tryGit(owned.mainRepo, 'branch', '-D', owned.branch);
     if (fs.existsSync(wt)) fs.rmSync(wt, { recursive: true, force: true });
     removed.push(wt);
   }
