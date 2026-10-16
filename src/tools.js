@@ -226,6 +226,9 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
   });
 
   tool('continue', 'Reanuda la sesión de un agente con un mensaje de seguimiento (mismo workdir).', { job_id: z.string(), message: z.string().min(1) }, a => ({ job_id: jm.continueJob(a.job_id, a.message) }));
+  tool('retry', 'Relanza un job terminal con su brief original completo (brief.md) o con task nuevo; el job nuevo conserva worker, cwd y workspace, y guarda parentId.',
+    { job_id: z.string(), task: z.string().min(1).optional().describe('Brief nuevo; sin él se reutiliza el brief.md íntegro del job') },
+    a => ({ job_id: jm.retry(a.job_id, a.task) }));
   tool('summarize', 'Un agente (rol summarizer) resume la sesión de un job.', { job_id: z.string(), focus: z.string().optional() }, a => ({ job_id: jm.summarize(a.job_id, a.focus) }));
   tool('compact', 'Comprime la sesión de un job en un brief de relevo (summary.md) reutilizable con handoff.', { job_id: z.string() }, a => ({ job_id: jm.compact(a.job_id) }));
   tool('review', 'Revisión en solo lectura de los cambios de un job (o de un cwd).', { job_id: z.string().optional(), cwd: z.string().optional(), focus: z.string().optional() }, a => {
