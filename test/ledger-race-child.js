@@ -17,15 +17,23 @@ let round = 0;
 
 const sleep = ms => { if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
 
-const waitFor = file => {
-  const deadline = Date.now() + waitMs;
+const waitFor = (file, timeoutMs, { required = false } = {}) => {
+  const deadline = Date.now() + timeoutMs;
   while (!fs.existsSync(file) && Date.now() < deadline) sleep(1);
+  if (required && !fs.existsSync(file)) throw new Error(`rendezvous timeout: ${file}`);
 };
 
+// Both children start at the same instant so neither pays the lock timeout while booting.
+fs.writeFileSync(path.join(rendezvousDir, `boot-${role}`), '');
+waitFor(path.join(rendezvousDir, 'start'), 10_000, { required: true });
+
 const ledger = createLedger({ usagePath }, {
+  // A longer wait than the 2 s default keeps a busy round from falling back to the unlocked
+  // fail-soft path, which the unit tests already cover; the stale threshold (10 s) still wins.
+  lock: { timeoutMs: 5_000 },
   now: () => {
     fs.writeFileSync(path.join(rendezvousDir, `${role}-${round}`), '');
-    waitFor(path.join(rendezvousDir, `${other}-${round}`));
+    waitFor(path.join(rendezvousDir, `${other}-${round}`), waitMs);
     sleep(settleMs);
     return new Date('2026-10-16T10:00:00Z');
   },
@@ -34,9 +42,14 @@ const ledger = createLedger({ usagePath }, {
 const failures = [];
 const attempt = fn => { try { fn(); } catch (error) { failures.push(error.code ?? error.message); } };
 
+// Real clients mutate at job pace, not in a hot loop; without this pause one child re-acquires the
+// lock back-to-back and starves the other until the fail-soft timeout.
+const PAUSE_MS = 10;
 for (round = 1; round <= rounds; round += 1) {
   attempt(() => ledger.reserve(`${role}-${round}`, 'w', 0.01));
+  sleep(PAUSE_MS);
   attempt(() => ledger.record('w', { input_tokens: 1, output_tokens: 1 }, 0.01));
+  sleep(PAUSE_MS);
 }
 
 process.stdout.write(JSON.stringify({ role, failures }));

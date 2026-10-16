@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createLedger } from '../src/ledger.js';
-import { here, tmp } from './helpers.js';
+import { here, tmp, until } from './helpers.js';
 
 const MONTH = '2026-10';
 const AT = () => new Date('2026-10-16T10:00:00Z');
@@ -35,7 +35,10 @@ test('MC-10: dos procesos que reservan y registran 50 veces no pierden actualiza
   const rendezvous = path.join(home, 'rendezvous');
   fs.mkdirSync(rendezvous, { recursive: true });
 
-  const children = await Promise.all(['a', 'b'].map(role => spawnChild([usagePath, rendezvous, role, String(ROUNDS), '20', role === 'a' ? '5' : '20'])));
+  const children = ['a', 'b'].map(role => spawnChild([usagePath, rendezvous, role, String(ROUNDS), '20', role === 'a' ? '5' : '20']));
+  await until(() => fs.existsSync(path.join(rendezvous, 'boot-a')) && fs.existsSync(path.join(rendezvous, 'boot-b')), 'ambos hijos deben arrancar');
+  fs.writeFileSync(path.join(rendezvous, 'start'), '');
+  const results = await Promise.all(children);
 
   const all = JSON.parse(fs.readFileSync(usagePath, 'utf8'));
   const reservations = all.reservations ?? {};
@@ -45,12 +48,12 @@ test('MC-10: dos procesos que reservan y registran 50 veces no pierden actualiza
       assert.ok(reservations[`${role}-${i}`], `falta la reserva ${role}-${i}`);
     }
   }
-  const month = all[MONTH].w;
+  const month = all[MONTH]?.w ?? {};
   assert.equal(month.runs, 2 * ROUNDS);
   assert.equal(month.input_tokens, 2 * ROUNDS);
   assert.equal(month.output_tokens, 2 * ROUNDS);
   assert.ok(Math.abs(month.cost_usd - 2 * ROUNDS * 0.01) < 1e-9, `costo ${month.cost_usd}`);
-  for (const child of children) assert.deepEqual(child.failures, [], `el hijo ${child.role} no puede perder mutaciones`);
+  for (const child of results) assert.deepEqual(child.failures, [], `el hijo ${child.role} no puede perder mutaciones`);
   assert.equal(fs.existsSync(lockPathOf(usagePath)), false, 'los hijos no pueden dejar locks residuales');
 });
 
