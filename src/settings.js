@@ -22,7 +22,7 @@ const Worker = z.object({
   price_per_mtok: z.object({ input: z.number().nonnegative(), output: z.number().nonnegative() }).optional(),
 });
 
-const Roles = z.object({ reporter: z.string(), summarizer: z.string(), reviewer: z.string() });
+const Roles = z.object({ reporter: z.string(), summarizer: z.string(), reviewer: z.string(), presenter: z.string() });
 const Defaults = z.object({ worker: z.string(), max_parallel: z.number().int().positive().default(4), timeout_min: z.number().positive().default(60) });
 const Notify = z.object({
   enabled: z.boolean().default(true),
@@ -30,6 +30,7 @@ const Notify = z.object({
   heartbeat_min: z.number().positive().default(10),
 });
 const Report = z.object({ enabled: z.boolean().default(true), default_style: z.string().default('papercraft') });
+const Present = z.object({ enabled: z.boolean().default(true), default_style: z.string().default('papercraft-deck') });
 const Improve = z.object({ enabled: z.boolean().default(true), hints: z.boolean().default(true) });
 const Standards = z.object({ enabled: z.boolean().default(true), preamble: z.string().min(1).default(DEFAULT_STANDARDS_PREAMBLE) });
 const Providers = z.object({
@@ -44,9 +45,9 @@ export const DEFAULT_SETTINGS = {
     // max-hive: massive parallel bulk work at ~zero cost on a Go "contributor" model (no zero data retention). See README "max-hive".
     'max-hive': { provider: 'opencode', model: 'opencode-go/muse-spark-1.3-contributor', effort: 'high', priority: 9, strengths: ['bulk'], budget: { monthly_usd: 5 } },
   },
-  roles: { reporter: 'ds-flash', summarizer: 'ds-flash', reviewer: 'luna-max' },
+  roles: { reporter: 'ds-flash', summarizer: 'ds-flash', reviewer: 'luna-max', presenter: 'luna-max' },
   defaults: { worker: 'luna-max', max_parallel: 4, timeout_min: 60 },
-  plugins: { notify: {}, report: {}, improve: {} },
+  plugins: { notify: {}, report: {}, present: {}, improve: {} },
   standards: { enabled: true, preamble: DEFAULT_STANDARDS_PREAMBLE },
   providers: { opencode: { isolate_config: true } },
 };
@@ -67,6 +68,7 @@ export function loadSettings(home, env = process.env) {
     plugins: {
       notify: { ...DEFAULT_SETTINGS.plugins.notify, ...(user.plugins?.notify ?? {}) },
       report: { ...DEFAULT_SETTINGS.plugins.report, ...(user.plugins?.report ?? {}) },
+      present: { ...DEFAULT_SETTINGS.plugins.present, ...(user.plugins?.present ?? {}) },
       improve: { ...DEFAULT_SETTINGS.plugins.improve, ...(user.plugins?.improve ?? {}) },
     },
     standards: user.standards == null ? DEFAULT_SETTINGS.standards
@@ -88,7 +90,7 @@ export function loadSettings(home, env = process.env) {
   const schema = z.object({
     workers: z.record(z.string(), Worker).refine(w => Object.keys(w).length > 0, 'debe haber al menos un worker'),
     roles: Roles, defaults: Defaults,
-    plugins: z.object({ notify: Notify, report: Report, improve: Improve }),
+    plugins: z.object({ notify: Notify, report: Report, present: Present, improve: Improve }),
     standards: Standards,
     providers: Providers,
   });

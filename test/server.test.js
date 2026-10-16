@@ -28,7 +28,7 @@ async function connect(extraEnv = {}) {
   return { client, call };
 }
 
-const NAMES = ['workers', 'report', 'reload_config', 'stats', 'improve', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'cancel', 'merge', 'cleanup'];
+const NAMES = ['workers', 'report', 'present', 'reload_config', 'stats', 'improve', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'cancel', 'merge', 'cleanup'];
 
 test('workers + report tools end to end', async () => {
   const { client, call } = await connect();
@@ -37,10 +37,25 @@ test('workers + report tools end to end', async () => {
     assert.deepEqual(rows.map(r => r.alias).sort(), ['alt', 'luna-max']);
     assert.equal(rows.find(r => r.alias === 'luna-max').available, true);
     const r1 = await call('run', { task: 'hola', cwd: tmp('colmena-c-'), wait: true, kind: 'code' });
+    const deck = await call('present', { job_ids: [r1.id], title: 'Hito E2E', notes: 'Objetivo: terminar la función.' });
+    assert.equal(deck.usedFallback, false);
+    assert.match(deck.path, /-hito-e2e-deck[\\/]/);
+    assert.ok(fs.existsSync(deck.path));
     const rep = await call('report', { job_ids: [r1.id], title: 'Ronda E2E' });
     assert.equal(rep.usedFallback, false);
     assert.ok(fs.existsSync(rep.path));
+    assert.ok(rep.next.some(item => /present/.test(item)));
     assert.match((await call('report', { job_ids: [r1.id], style: 'nope' })).error, /estilo 'nope'/);
+  } finally { await client.close(); }
+});
+
+test('plugins.present.enabled false oculta la tool MCP', async () => {
+  const home = codexOnlyHome();
+  const file = path.join(home, 'colmena.yml');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('  notify: {enabled: false}', '  notify: {enabled: false}\n  present: {enabled: false}'));
+  const { client } = await connect({ COLMENA_HOME: home });
+  try {
+    assert.equal((await client.listTools()).tools.some(item => item.name === 'present'), false);
   } finally { await client.close(); }
 });
 

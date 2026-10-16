@@ -56,6 +56,7 @@ test('reporter writes report.html → used, no fallback', async () => {
   const { jm, config, ids } = await setup();
   const r = await generateReport({ jm, config, ids, title: 'Ronda 1' });
   assert.equal(r.usedFallback, false);
+  assert.ok(r.next.some(item => /present/.test(item)));
   assert.match(fs.readFileSync(r.path, 'utf8'), /fake report/);
   assert.ok(fs.existsSync(path.join(path.dirname(r.path), 'data.json')));
 });

@@ -24,8 +24,10 @@ test('no yml → defaults', () => {
   assert.equal(s.defaults.worker, 'luna-max');
   assert.equal(s.roles.reporter, 'ds-flash');
   assert.equal(s.roles.summarizer, 'ds-flash');
+  assert.equal(s.roles.presenter, 'luna-max');
   assert.equal(s.plugins.notify.heartbeat_min, 10);
   assert.equal(s.plugins.report.default_style, 'papercraft');
+  assert.deepEqual(s.plugins.present, { enabled: true, default_style: 'papercraft-deck' });
   assert.equal(s.standards.enabled, true);
   assert.match(s.standards.preamble, /red.*green.*refactor/i);
   assert.match(s.standards.preamble, /DRY/);
@@ -40,7 +42,7 @@ test('yml replaces workers, merges sections', () => {
   const { h, env } = withYml(`
 workers:
   solo: {provider: opencode, model: opencode-go/deepseek-v4-pro, effort: max, priority: 1}
-roles: {reporter: solo, summarizer: solo, reviewer: solo}
+roles: {reporter: solo, summarizer: solo, reviewer: solo, presenter: solo}
 defaults: {worker: solo}
 plugins: {notify: {heartbeat_min: 5}}
 `);
@@ -72,7 +74,7 @@ test('broken yaml syntax → readable error', () => {
 });
 test('COLMENA_CONFIG points elsewhere', () => {
   const h = home(); const f = path.join(h, 'otro.yml');
-  fs.writeFileSync(f, 'workers:\n  z: {provider: codex, model: m}\ndefaults: {worker: z}\nroles: {reporter: z, summarizer: z, reviewer: z}\n');
+  fs.writeFileSync(f, 'workers:\n  z: {provider: codex, model: m}\ndefaults: {worker: z}\nroles: {reporter: z, summarizer: z, reviewer: z, presenter: z}\n');
   assert.deepEqual(Object.keys(loadSettings(home(), { COLMENA_CONFIG: f }).workers), ['z']);
 });
 test('standards supports a custom preamble and can be disabled', () => {
@@ -108,6 +110,21 @@ test('plugins.improve: defaults y override', () => {
   assert.deepEqual(s.plugins.improve, { enabled: true, hints: true });
   const { h, env } = withYml('plugins: {improve: {enabled: false, hints: false}}\n');
   assert.deepEqual(loadSettings(h, env).plugins.improve, { enabled: false, hints: false });
+});
+test('plugins.present: default, override and validation', () => {
+  const defaults = loadSettings(home(), {});
+  assert.deepEqual(defaults.plugins.present, { enabled: true, default_style: 'papercraft-deck' });
+  assert.equal(defaults.roles.presenter, 'luna-max');
+
+  const { h, env } = withYml('workers: {alt: {provider: codex, model: m}}\ndefaults: {worker: alt}\nroles: {reporter: alt, summarizer: alt, reviewer: alt, presenter: alt}\nplugins: {present: {enabled: false, default_style: custom}}\n');
+  const configured = loadSettings(h, env);
+  assert.equal(configured.roles.presenter, 'alt');
+  assert.deepEqual(configured.plugins.present, { enabled: false, default_style: 'custom' });
+
+  const invalidRole = withYml('roles: {presenter: ghost}\n');
+  assert.throws(() => loadSettings(invalidRole.h, invalidRole.env), /roles\.presenter.*ghost/);
+  const invalidPlugin = withYml('plugins: {present: {enabled: yes}}\n');
+  assert.throws(() => loadSettings(invalidPlugin.h, invalidPlugin.env), /plugins\.present\.enabled/);
 });
 test('invalid plugins.improve identify the field', () => {
   const { h, env } = withYml('plugins: {improve: {enabled: maybe}}\n');
