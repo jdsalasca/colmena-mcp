@@ -39,9 +39,14 @@ defaults: {worker: luna-max, max_parallel: 4, timeout_min: 60}
 plugins:
   notify: {enabled: true, on: [start, finish, fail], heartbeat_min: 10}
   report: {enabled: true, default_style: papercraft}
+standards:
+  enabled: true
+  # preamble: |-
+  #   Personaliza el preámbulo español integrado para tus jobs run.
 ```
 
 Notas:
+- `standards.enabled` activa el preámbulo de trabajo para `run` (TDD, código limpio/DRY, reutilización, evidencia y formato de reporte). Los helpers `summarize`, `compact`, `review` y `report` no lo reciben. Edita el YAML y llama a `reload_config` para aplicar workers, roles, defaults y plugins sin reiniciar; `COLMENA_MAX_PARALLEL` y `COLMENA_JOB_TIMEOUT_MIN` conservan prioridad sobre el YAML.
 - `effort` se pasa como `model_reasoning_effort` (Codex) o `--variant` (OpenCode).
 - OpenCode informa el costo en USD de cada ejecución. **Codex no**: para contabilizarlo añade `price_per_mtok: {input: …, output: …}` al worker.
 - El saldo real de tus cuentas no se puede consultar por API: el presupuesto es **declarativo + conteo local** (`usage.json`).
@@ -56,6 +61,7 @@ Notas:
 | Tool | Para qué |
 |---|---|
 | `workers` | Workers con prioridad, fortalezas, gasto del mes, restante y disponibilidad |
+| `reload_config` | Relee y valida `colmena.yml`; jobs posteriores usan los cambios sin reiniciar |
 | `run` / `run_many` | Lanza uno o varios agentes (`worker?`, `kind?`, `isolation?`, `wait: true` espera el reporte) |
 | `wait`, `status`, `list` | Seguimiento (`wait` máx. 600 s, `mode: any|all`) |
 | `result` | Reporte `RESULT/FILES/TESTS/RISKS`, archivos, diffstat, rama, worker y costo |

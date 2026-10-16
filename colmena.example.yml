@@ -2,6 +2,8 @@
 # Si defines `workers`, REEMPLAZAN a los de por defecto; el resto de secciones se mezclan con los defaults.
 # Los modelos viven AQUÍ y solo aquí: las herramientas únicamente aceptan estos alias, así nada se lanza con un modelo caro por accidente.
 # Cambia el archivo y llama a la tool `reload_config`: no hace falta reiniciar.
+# `standards` añade instrucciones de calidad a los jobs `run`; los helpers no reciben ese preámbulo.
+# Si omites `preamble`, se usa el estándar español integrado (TDD, DRY, reutilización, evidencia y reporte).
 
 workers:
   luna-max:
@@ -44,3 +46,9 @@ plugins:
   report:
     enabled: true
     default_style: papercraft
+
+standards:
+  enabled: true
+  # preamble: |-
+  #   Usa TDD (red, green, refactor), código limpio y DRY.
+  #   Reutiliza lo existente, verifica con evidencia y reporta en RESULT/FILES/TESTS/RISKS.
