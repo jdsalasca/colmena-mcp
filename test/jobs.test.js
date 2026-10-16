@@ -18,17 +18,12 @@ function repo() {
   fs.writeFileSync(path.join(d, 'a.txt'), 'a\n'); git(d, 'add', '-A'); git(d, 'commit', '-qm', 'i');
   return d;
 }
-import { baseEnv, codexOnlyHome } from './helpers.js';
+import { baseEnv, codexOnlyHome, until } from './helpers.js';
 const mk = (env = {}) => {
   const config = getConfig(baseEnv(codexOnlyHome(), env));
   return { jm: createJobManager(config), config };
 };
 const S = (task, extra = {}) => ({ task, cwd: tmp('luna-cwd-'), isolation: 'inplace', ...extra });
-async function until(predicate, message = 'condition should become true', timeoutMs = 3000) {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
-  assert.ok(predicate(), message);
-}
 function seedRunning(config, { id = 'recovered', delivered = false, stderr = '', owner = Number.MAX_SAFE_INTEGER, pid = Number.MAX_SAFE_INTEGER } = {}) {
   const dir = path.join(config.jobsDir, id);
   fs.mkdirSync(dir, { recursive: true });

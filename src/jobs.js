@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events';
 import { attachRun, isProcessAlive, startRun } from './runner.js';
 import { getAdapter } from './providers/index.js';
 import { createLedger } from './ledger.js';
-import { chooseWorker, workerStatus } from './router.js';
+import { chooseWorker, workerStatus, reserveUsdOf } from './router.js';
 import { buildPrompt, parseReport } from './report.js';
 import * as iso from './isolation.js';
 import { writeFileAtomic } from './atomic-write.js';
@@ -58,6 +58,16 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     return finished.get(id);
   }
 
+  // Only budgeted, non-free workers reserve: a free plan has no balance to exhaust and the reserve would be noise.
+  const reservableAmount = worker => (worker.free || worker.budget?.monthly_usd == null ? 0 : reserveUsdOf(config.settings, worker));
+  const reserveBudget = (id, workerName, amount) => {
+    if (!(amount > 0)) return;
+    try { ledger.reserve(id, workerName, amount); } catch { /* bookkeeping must never break a job */ }
+  };
+  const releaseBudget = id => {
+    try { ledger.release(id); } catch { /* bookkeeping must never break a job */ }
+  };
+
   function summaryText(id) {
     need(id);
     const t = readFile(path.join(store.jobDir(id), 'summary.md')) ?? lastMessage(id);
@@ -77,6 +87,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     const prompt = spec.rawPrompt ?? buildPrompt({
       task: spec.task, contextFiles: spec.contextFiles, handoff: handoffTexts, kind, standards: config.settings.standards, branch: ws.branch,
     });
+    const reservedUsd = reservableAmount(worker);
     store.create({
       id, state: 'queued', kind, task: String(spec.task).slice(0, 300), cwd,
       isolation: spec.workspace ? 'reuse' : (spec.isolation ?? 'inplace'),
@@ -84,8 +95,10 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
       parentId: spec.parentId, resumeSessionId: spec.resumeSessionId, ephemeral: !!spec.ephemeral,
       worker: worker.name, provider: worker.provider, model: worker.model, effort: worker.effort ?? null, note: selection.note,
       workerConfig: { ...worker }, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS,
+      ...(reservedUsd > 0 ? { reservedUsd } : {}),
       owner: process.pid, createdAt: Date.now(),
     });
+    reserveBudget(id, worker.name, reservedUsd);
     fs.writeFileSync(path.join(store.jobDir(id), 'prompt.txt'), prompt);
     store.audit({ id, kind, worker: worker.name, cwd, isolation: spec.isolation, briefHash: crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 12) });
     ensureFinished(id);
@@ -278,6 +291,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     }
     patch.nominalCostUsd = costOf(worker, state.usage);
     patch.costUsd = worker.free ? 0 : patch.nominalCostUsd;
+    releaseBudget(id); // the real cost below replaces the estimate; a real overrun stays visible in the ledger
     try { ledger.record(meta.worker, state.usage, patch.costUsd); } catch { /* bookkeeping must never break a job */ }
     const updated = store.update(id, patch);
     bus.emit('job.finished', { id, worker: meta.worker, provider: meta.provider ?? 'desconocido', kind: meta.kind, state: updated.state, task: meta.task, error: updated.error, ...(updated.message ? { message: updated.message } : {}), costUsd: patch.costUsd, usage: state.usage, startedAt: updated.startedAt, endedAt: updated.endedAt });
@@ -343,6 +357,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     if (qi >= 0) {
       queue.splice(qi, 1);
       store.update(id, { state: 'cancelled', endedAt: Date.now() });
+      releaseBudget(id);
       fs.rmSync(path.join(store.jobDir(id), 'prompt.txt'), { force: true });
       finished.get(id)?.resolve();
       return status(id);
@@ -414,12 +429,15 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
 
       const markOrphaned = error => {
         const updated = store.update(m.id, { state: 'orphaned', endedAt: Date.now(), error });
+        releaseBudget(m.id);
         bus.emit('job.finished', { id: m.id, worker: m.worker, provider: provider ?? 'desconocido', kind: m.kind, state: updated.state, task: m.task, error: updated.error, endedAt: updated.endedAt });
       };
       const getExpectedAdapter = () => {
         if (worker.provider && provider && worker.provider !== provider) throw new Error('el proveedor guardado no coincide');
         return getAdapter(provider);
       };
+      // A surviving job keeps its reservation; restoring it also heals a crash between release and the meta update.
+      const restoreReservation = () => { if (m.reservedUsd > 0) reserveBudget(m.id, m.worker, m.reservedUsd); };
 
       if (m.state === 'queued' || (!m.pid && savedPrompt !== null)) {
         if (savedPrompt === null) {
@@ -433,6 +451,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
           state: 'queued', owner: process.pid, adopted: true,
           ...(started ? { pid: null, startedAt: null, logOffset: 0, usage: {}, delivered: false, deliveredAt: null, hasFinalMessage: false } : {}),
         });
+        restoreReservation();
         ensureFinished(m.id);
         queue.push({ id: m.id, prompt: savedPrompt, worker, timeoutMin: m.timeoutMin ?? config.timeoutMin, exitGraceS: m.exitGraceS ?? config.exitGraceS });
         continue;
@@ -442,12 +461,15 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
         adapter = getExpectedAdapter();
       } catch (error) { markOrphaned(`no se pudo adoptar el job: ${error.message}`); continue; }
       const meta = store.update(m.id, { provider, adopted: true, owner: process.pid });
+      restoreReservation();
       monitor(m.id, meta, worker, adapter, options => attachRun({
         pid: m.pid, logPath: path.join(dir, 'events.jsonl'), stderrPath: path.join(dir, 'stderr.log'),
         offset: m.logOffset ?? 0, parseLine: adapter.parseLine, ...options,
       }), { adopted: true });
       fs.rmSync(promptPath, { force: true });
     }
+    // Reservations only survive for jobs that are still queued or running; everything else is a leak from a crash.
+    try { ledger.reconcile(store.list({}).filter(m => !TERMINAL.has(m.state)).map(m => m.id)); } catch { /* bookkeeping must never break recovery */ }
     pump();
   }
 

@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +8,12 @@ export const here = path.dirname(fileURLToPath(import.meta.url));
 export const fakeCodex = path.join(here, 'fake-codex.js');
 export const fakeOpencode = path.join(here, 'fake-opencode.js');
 export const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
+
+export async function until(predicate, message = 'condition should become true', timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(predicate(), message);
+}
 
 // A COLMENA_HOME whose colmena.yml routes EVERYTHING to the fake codex provider, so tests never launch real agents.
 export function codexOnlyHome(extraYaml = '') {

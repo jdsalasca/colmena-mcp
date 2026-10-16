@@ -27,6 +27,7 @@ workers:
     priority: 2
     strengths: [code, docs, summary, report]
     budget: {monthly_usd: 10}
+    # reserve_usd: 0.5           # estimado que cada job reserva de este saldo al encolar; se libera al terminar/cancelar
   max-hive:                    # ver README "max-hive": trabajo masivo en paralelo a costo ~0
     provider: opencode
     model: opencode-go/muse-spark-1.3-contributor   # modelo "contributor" del plan Go (sin zero data retention)
@@ -56,6 +57,7 @@ defaults:
   retry_transient: 1  # reintenta una vez fallos del proveedor <30 s y reintentables (isRetryable / "Unexpected server error"); 0 lo desactiva
   wait_max_s: 600   # tope de cada espera wait/run (1 a 1800 s); sube hasta 1800 para jobs largos
   cancel_jobs_on_shutdown: false  # true cancela jobs queued/running al cerrar el servidor MCP; false los deja trabajar y la próxima instancia los adopta
+  reserve_usd: 0    # reserva global estimada por job concurrente (0 la desactiva); workers.<alias>.reserve_usd la sobreescribe
 
 plugins:
   notify:
