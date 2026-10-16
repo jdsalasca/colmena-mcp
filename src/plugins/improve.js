@@ -53,7 +53,7 @@ const sameCwd = (a, b) => {
 
 export function recentFocuses(metas, { cwd, sinceMs = IMPROVE_WINDOW_MS, now = Date.now() } = {}) {
   return new Set(metas
-    .filter(m => m.improveFocus && Number.isFinite(m.createdAt) && now - m.createdAt <= sinceMs && sameCwd(m.cwd, cwd))
+    .filter(m => m.improveFocus && Number.isFinite(m.createdAt) && m.createdAt <= now && now - m.createdAt <= sinceMs && sameCwd(m.cwd, cwd))
     .map(m => m.improveFocus));
 }
 
