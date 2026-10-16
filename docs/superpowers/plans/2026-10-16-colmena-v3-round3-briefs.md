@@ -1,0 +1,41 @@
+# colmena-mcp v0.3 — Ronda 3 (pedidos del dueño): briefs G, H e I
+
+> Base: `develop` ya incluye A (standards/reload_config), B (improve), C (stats), D, F (config aislada de OpenCode) y las correcciones. Contexto común y estándares obligatorios: ver `2026-10-16-colmena-v3-briefs.md` (secciones "Contexto común" y "Estándares obligatorios": TDD primero, código limpio, sin duplicación, suite verde, commits pequeños, reporte RESULT/FILES/TESTS/RISKS, no crear archivos de plan/notas fuera de los entregables). Implementa solo tu brief; otros agentes trabajan los demás en paralelo. Los conflictos menores en `src/tools.js`, `src/settings.js` y `README.md` los resuelve el orquestador al fusionar: mantén tus cambios aditivos y localizados.
+
+## Brief G — Notificaciones con proveedor y resumen de agentes en curso
+
+**Objetivo:** que cada notificación diga si el agente es de **codex** u **opencode** y muestre un **overview** del trabajo en curso por proveedor; el latido de 10 minutos ya existe y debe seguir saliendo mientras haya agentes activos.
+
+**Requisitos**
+- Los eventos del bus (`job.started`, `job.finished`) incluyen `provider` (de la config del worker del job; ya está en `meta.provider`). Si falta, `desconocido`.
+- `src/plugins/notify.js`: todas las notificaciones (start, finish, fail y heartbeat) llevan al final del cuerpo un overview **calculado en el momento de enviar**: `En curso: codex 2 · opencode 1` (cuenta de agentes `running` por proveedor; incluye los `queued` como `+N en cola` si los hay) o `En curso: ninguno`. Los workers se muestran con su proveedor, p. ej. `luna-max (codex)`, y el start agrupado `luna-max (codex)×2, ds-flash (opencode)`. Los toasts de finish/fail muestran `[codex] luna-max: <tarea 60 car.> → terminó · $0.00`.
+- El overview se obtiene de `jm.active()` y `jm.stats()` (extiende `active()` o añade un método mínimo al JobManager si hace falta; sin duplicar lógica). Función pura `formatOverview(active, queued)` exportada y testeada. Respeta el límite de 300 caracteres del toast: se trunca la tarea, nunca el overview.
+- El heartbeat conserva su semántica (cada `heartbeat_min`, solo si `running+queued > 0`) y usa el mismo overview. `activity.log` registra el cuerpo completo.
+
+**Tests primero:** `formatOverview` (vacío, solo codex, mezcla, con cola, proveedor desconocido); start agrupado con dos proveedores; finish/fail con etiqueta `[provider]`; overview presente en los 4 tipos de notificación y actualizado (no cacheado); heartbeat con overview; truncado que respeta el overview; README actualizado (sección Notificaciones).
+
+## Brief H — Preferencias de usuario con cambio en caliente
+
+**Objetivo:** una **preferencia de proveedor** (codex u opencode) que viva en `colmena.yml`, que el router respete y que se pueda cambiar **en caliente** (sin reiniciar el MCP) para, por ejemplo, pasar de Codex a OpenCode cuando se acabe la cuota de Codex.
+
+**Requisitos**
+- `colmena.yml`: `preferences: {provider: auto | codex | opencode}` validado con zod (defecto `auto` = comportamiento actual). `src/settings.js` lo incluye en defaults y en la fusión.
+- Router (`src/router.js`): sin `worker` explícito y con preferencia distinta de `auto`, elige entre los workers **disponibles de ese proveedor** (por prioridad; `kind` sigue priorizando fortalezas dentro de ese conjunto; `defaults.worker` solo cuenta si es de ese proveedor); si no hay ninguno disponible, cae a los demás proveedores y lo indica en el resultado (`note: "sin workers disponibles de <provider>; se usó <alias>"`). Un `worker` explícito siempre manda. Los helpers por rol siguen usando sus roles.
+- Tool MCP `preferences {provider?: 'auto'|'codex'|'opencode'}`: sin argumentos devuelve la preferencia actual y qué worker elegiría hoy el router; con `provider` la **cambia en memoria de inmediato** (afecta al siguiente `run`) y la **persiste** en el archivo de configuración efectivo (`COLMENA_CONFIG` o `<home>/colmena.yml`): si existe, edítalo con la API `Document` de la librería `yaml` **preservando comentarios y el resto del contenido**; si no existe, créalo mínimo. Escritura atómica (tmp + rename). Valor inválido → error claro sin tocar nada.
+- `reload_config` recoge la preferencia del YAML y su diff la incluye. `workers` marca `preferred: true/false` por fila (mantén el formato de array y añade el campo).
+- `colmena.example.yml` y README documentan la sección y la tool; en el ejemplo `preferences: {provider: auto}` con un comentario sobre cuándo cambiarla.
+
+**Tests primero:** zod (válido, inválido, defecto); router (preferencia codex/opencode, fallback con `note`, explícito gana, kind dentro del conjunto, `defaults.worker` de otro proveedor ignorado); tool get/set (sin args, cambio efectivo en el siguiente `run` verificado con el fake y su log, persistencia que conserva comentarios, archivo inexistente, valor inválido, sin temporales residuales); `reload_config` tras editar el YAML a mano.
+
+## Brief I — Presentaciones papercraft de hitos (`present`) delegadas a Codex
+
+**Objetivo:** que al terminar features o crear hitos colmena pueda generar una **presentación HTML en estilo papercraft**, redactada por un agente Codex Luna max, para que el orquestador la audite/corrija y entregue el enlace al dueño. Es una feature de colmena, para todos los desarrollos.
+
+**Requisitos**
+- Nuevo rol `presenter` en `roles` (zod + defaults; defecto `luna-max`) y `plugins.present: {enabled: true, default_style: papercraft-deck}`.
+- Nuevo estilo `styles/papercraft-deck/` con `style.md` (instrucciones para el agente: narrativa de hito, una idea por diapositiva, tono claro, sin inventar datos, cómo estructurar cada `<section class="slide">`) y `template.html`: presentación **autocontenida** (sin recursos externos ni frameworks) con navegación por teclado (flechas, espacio, Home/End), una diapositiva por pantalla con `scroll-snap`, indicador de progreso y número de página, CSS de impresión (una diapositiva por hoja), modo oscuro y responsive; estética **papel recortado** coherente con `styles/papercraft/template.html` (kraft, tarjetas crema con borde rasgado, cinta washi, sombras apiladas, sellos de estado, tipografía manuscrita en títulos). Marcadores `{{title}}`, `{{subtitle}}`, `{{generated}}`, `{{slides_count}}` y `<!--COLMENA:SLIDES-->`.
+- `src/plugins/present.js` (reutiliza helpers de `src/plugins/report.js` y `src/job-metrics.js`; no dupliques): `generatePresentation({jm, config, ids, style, title, notes, open})` crea `<home>/reports/<fecha>-<slug>-deck/` con `data.json` (jobs, totales y `notes` libres del orquestador con objetivo del hito, decisiones y riesgos), lanza un job con el worker del rol `presenter` (`inplace` en esa carpeta) con un prompt que apunta a `style.md`, `template.html` y `data.json` y pide `deck.html`; valida (contiene `<html`, al menos 3 `class="slide"`, tamaño razonable) y, si falla o no es válido, usa un **renderizador de respaldo determinista** (portada, objetivo/notas, una diapositiva por job con RESULT/FILES/TESTS/RISKS escapados, métricas y cierre). Devuelve `{path, dir, style, usedFallback, presenterJob, cost_usd}`.
+- Tool MCP `present {job_ids, title?, subtitle?, notes?, style?, open?}` (gateada por `plugins.present.enabled`). El resultado de `report` añade en `next` la sugerencia de `present` para cerrar el hito.
+- `skills/colmena-delegation/SKILL.md` y README: **flujo de entrega** para todo desarrollo: al terminar una feature/hito → `present` (Codex Luna) → el orquestador **audita** el deck (abre el HTML, usa `review`, contrasta los datos con los resultados reales), **corrige** (`continue` o nueva ejecución con instrucciones concretas) y solo con su visto bueno entrega el enlace al dueño.
+
+**Tests primero:** zod (rol y plugin); `generatePresentation` con presentador falso que escribe `deck.html` válido (usado), que no escribe nada (fallback), que falla (fallback) y que escribe HTML inválido (fallback); el fallback escapa HTML y contiene cada RESULT; estilo desconocido → error que lista estilos; carpeta con tildes y espacios; `data.json` incluye `notes`; la tool por el servidor MCP (actualiza `NAMES`); `report` devuelve `next` con `present`; la plantilla no deja marcadores `{{` sin reemplazar y contiene navegación por teclado.
