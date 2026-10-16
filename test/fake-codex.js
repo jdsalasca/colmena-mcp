@@ -9,6 +9,8 @@ const cwd = val('-C') || process.cwd();
 const out = val('-o');
 const ri = argv.indexOf('resume');
 const session = ri >= 0 ? argv[ri + 1] : 'sess-' + Math.random().toString(16).slice(2, 8);
+// The real `codex exec resume` rejects -C and -s (verified against codex 0.162): mimic it so tests catch regressions.
+if (ri >= 0) for (const bad of ['-C', '-s']) if (argv.includes(bad)) { process.stderr.write(`error: unexpected argument '${bad}' found\n`); process.exit(2); }
 if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ argv, cwd, prompt }) + '\n');
 
 const emit = o => process.stdout.write(JSON.stringify(o) + '\n');

@@ -16,10 +16,12 @@ export const codexAdapter = {
     if (resumeSessionId) a.push('resume', resumeSessionId);
     a.push('--json', '--skip-git-repo-check', '-m', worker.model);
     if (worker.effort) a.push('-c', `model_reasoning_effort="${worker.effort}"`);
-    if (readonly) a.push('-s', 'read-only');
+    // `exec resume` rejects -C and -s (verified on codex 0.162): the process already starts in workdir, and read-only goes through config.
+    if (readonly) a.push(...(resumeSessionId ? ['-c', 'sandbox_mode="read-only"'] : ['-s', 'read-only']));
     else a.push('--dangerously-bypass-approvals-and-sandbox');
     if (ephemeral) a.push('--ephemeral');
-    a.push('-C', workdir, '-o', lastMessagePath, prompt);
+    if (!resumeSessionId) a.push('-C', workdir);
+    a.push('-o', lastMessagePath, prompt);
     return a;
   },
 };

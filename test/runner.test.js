@@ -82,3 +82,13 @@ test('kill ends a hanging process', async () => {
   await h.kill();
   assert.notEqual((await h.done).code, 0);
 });
+
+test('codex resume: no -C/-s (real resume rejects them); readonly via sandbox_mode config', () => {
+  const a = codex.buildArgs({ ...base, prompt: 'x', resumeSessionId: 'S1' });
+  assert.ok(!a.includes('-C') && !a.includes('-s'));
+  assert.ok(a.includes('--dangerously-bypass-approvals-and-sandbox'));
+  assert.equal(a[a.length - 1], 'x');
+  const ro = codex.buildArgs({ ...base, prompt: 'x', resumeSessionId: 'S1', readonly: true });
+  assert.ok(!ro.includes('-C') && !ro.includes('-s') && !ro.includes('--dangerously-bypass-approvals-and-sandbox'));
+  assert.ok(ro.includes('sandbox_mode="read-only"'));
+});
