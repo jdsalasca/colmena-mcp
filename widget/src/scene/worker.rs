@@ -15,9 +15,9 @@ pub struct WorkerStyle {
 pub fn style_for_worker(alias: &str) -> WorkerStyle {
     let alias = alias.to_ascii_lowercase();
     let (palette, size_scale) = if alias.contains("luna") {
-        (WorkerPalette::Golden, 2)
+        (WorkerPalette::Golden, 3)
     } else if alias.contains("deepseek") || alias.contains("ds") {
-        (WorkerPalette::Blue, 2)
+        (WorkerPalette::Blue, 3)
     } else if alias.contains("hive") {
         (WorkerPalette::Green, 1)
     } else {
