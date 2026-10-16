@@ -7,7 +7,7 @@ Servidor MCP (stdio) para que **Claude Code orqueste y valide, como un product m
 - **Aislamiento por llamada:** `worktree` (rama `colmena/<id>`, por defecto en repos git), `inplace` o `readonly`.
 - **Paralelismo con cola**, sesiones reanudables, resúmenes, compactación y relevo entre agentes.
 - **Plugin `notify`:** toast de Windows al lanzar agentes, latido cada 10 min mientras haya trabajo, y aviso al terminar o fallar.
-- **Plugin `report`:** al cerrar una ronda, un agente barato redacta un HTML bonito (estilo **papercraft**, extensible) de lo logrado.
+- **Plugins `report` y `present`:** crean un reporte HTML de la ronda y una presentación papercraft de cierre del hito, respectivamente.
 - **Mejora continua:** `improve` lanza un agente que deja en `docs/backlog/` ítems priorizados con briefs listos para delegar; `report` y `wait` te invitan cuando toca.
 - Sin base de datos: estado en `~/.colmena/` (`jobs/`, `worktrees/`, `reports/`, `usage.json`, `activity.log`, `audit.log`).
 
@@ -36,12 +36,13 @@ workers:
   luna-max:       {provider: codex,    model: gpt-6-luna, effort: max, priority: 1, strengths: [code, refactor, tests]}
   ds-flash:       {provider: opencode, model: opencode-go/deepseek-v4.1-flash, effort: max, priority: 2, strengths: [code, docs, summary, report], budget: {monthly_usd: 10}}
   max-hive:       {provider: opencode, model: opencode-go/muse-spark-1.3-contributor, effort: high, priority: 9, strengths: [bulk], budget: {monthly_usd: 5}}
-roles:    {reporter: ds-flash, summarizer: ds-flash, reviewer: luna-max}
+roles:    {reporter: ds-flash, summarizer: ds-flash, reviewer: luna-max, presenter: luna-max}
 defaults: {worker: luna-max, max_parallel: 4, timeout_min: 60}
 preferences: {provider: auto} # codex | opencode para priorizar un proveedor sin reiniciar
 plugins:
   notify: {enabled: true, on: [start, finish, fail], heartbeat_min: 10}
   report: {enabled: true, default_style: papercraft}
+  present: {enabled: true, default_style: papercraft-deck}
   improve: {enabled: true, hints: true}
 standards:
   enabled: true
@@ -54,7 +55,7 @@ providers:
 ```
 
 Notas:
-- `standards.enabled` activa el preámbulo de trabajo para `run` (TDD, código limpio/DRY, reutilización, evidencia y formato de reporte). Los helpers `summarize`, `compact`, `review` y `report` no lo reciben. Edita el YAML y llama a `reload_config` para aplicar workers, roles, defaults, plugins y proveedores sin reiniciar; `COLMENA_MAX_PARALLEL` y `COLMENA_JOB_TIMEOUT_MIN` conservan prioridad sobre el YAML.
+- `standards.enabled` activa el preámbulo de trabajo para `run` (TDD, código limpio/DRY, reutilización, evidencia y formato de reporte). Los helpers `summarize`, `compact`, `review`, `report` y `present` no lo reciben. Edita el YAML y llama a `reload_config` para aplicar workers, roles, defaults, plugins y proveedores sin reiniciar; `COLMENA_MAX_PARALLEL` y `COLMENA_JOB_TIMEOUT_MIN` conservan prioridad sobre el YAML.
 - `preferences.provider` acepta `auto` (ruteo actual), `codex` u `opencode`. La tool `preferences` consulta la preferencia y el worker elegido ahora, o la cambia en memoria y en el YAML efectivo (`COLMENA_CONFIG` o `$COLMENA_HOME/colmena.yml`) para el siguiente `run`; no requiere reinicio. Si no hay workers disponibles de ese proveedor, el router usa otro y devuelve un `note`. `worker` explícito siempre manda; las tools auxiliares continúan usando sus roles.
 - `stats {since_days?}` resume jobs, éxito, duración, costo, tokens, workers, tipos y fallos de la ventana indicada (30 días por defecto).
 - `effort` se pasa como `model_reasoning_effort` (Codex) o `--variant` (OpenCode).
@@ -93,22 +94,28 @@ Notas:
 | `cancel` | Cancela y mata el árbol de procesos |
 | `merge` | Fusiona `colmena/<id>` (manual; se niega con destino sucio; restaura ante conflictos) |
 | `cleanup` | Borra worktrees y ramas `colmena/*` propios (`force` para descartar trabajo no fusionado) |
-| `report` | HTML de cierre de ronda (`job_ids`, `style?`, `title?`, `open?`); incluye `next` con lo que falta de `improve` |
+| `report` | HTML de cierre de ronda (`job_ids`, `style?`, `title?`, `open?`); `next` sugiere `present` e indica lo que falta de `improve` |
+| `present` | Presentación HTML papercraft de un hito (`job_ids`, `title?`, `subtitle?`, `notes?`, `style?`, `open?`) |
 | `improve` | Mejora continua: agente en worktree que escribe `docs/backlog/<fecha>-<focus>.md` (backlog/features/debt/all) con briefs listos para delegar |
 
-Flujo recomendado: `workers` → `run_many` → `wait` → `result` → `review`/`diff` → `merge` → `report` → `improve`. La skill [`skills/colmena-delegation`](skills/colmena-delegation/SKILL.md) explica cómo redactar los briefs.
+Flujo recomendado: `workers` → `run_many` → `wait` → `result` → `review`/`diff` → `merge` → `report` → `present` → auditar el deck → `improve`. La skill [`skills/colmena-delegation`](skills/colmena-delegation/SKILL.md) explica cómo redactar los briefs y validar la presentación antes de compartirla.
 
 ## Notificaciones
 Con `plugins.notify` activo recibes un toast de Windows agrupado al lanzar agentes, con el proveedor visible (`luna-max (codex)`), y un latido cada `heartbeat_min` mientras haya trabajos corriendo o en cola. Los avisos de término y fallo identifican el proveedor (`[codex] luna-max`). Todas las notificaciones terminan con un overview actualizado por proveedor, por ejemplo `En curso: codex 2 · opencode 1 · +1 en cola`, o `En curso: ninguno` cuando no queda trabajo. Sin trabajo no hay latido. El cuerpo del toast respeta el límite de 300 caracteres y acorta la tarea para conservar el overview. Todo queda también en `~/.colmena/activity.log`.
 
-## Estilos de reporte
-Un estilo es una carpeta `styles/<nombre>/` con `style.md` (instrucciones para el agente reportero) y `template.html` (plantilla con marcadores `{{title}}`, `{{jobs}}`… y `<!--COLMENA:CARDS-->`). Se buscan primero en `~/.colmena/styles/` y luego en el repo. Si el reportero falla, un renderizador determinista rellena la plantilla (`usedFallback: true`). Incluido: **papercraft**.
+## Estilos HTML
+Cada estilo es una carpeta `styles/<nombre>/` con `style.md` y `template.html`; se buscan primero en `~/.colmena/styles/` y luego en el repo. **`papercraft`** genera reportes de ronda con tarjetas y **`papercraft-deck`** genera presentaciones por diapositivas. Si el agente de cualquiera de las tools falla o produce HTML inválido, se rellena la plantilla con un renderizador determinista (`usedFallback: true`).
+
+## Presentaciones de hitos
+`present {job_ids, title?, subtitle?, notes?, style?, open?}` delega la redacción al rol `presenter` (por defecto `luna-max`, Codex) y crea `<COLMENA_HOME>/reports/<fecha>-<slug>-deck/deck.html`, junto con `data.json` con los jobs, métricas y notas del orquestador. `plugins.present.enabled` habilita la tool y `plugins.present.default_style` elige su estilo inicial (`papercraft-deck`). El HTML incluido funciona sin red ni frameworks, navega con flechas, espacio, Home y End, y tiene modo de impresión.
+
+Al cerrar una feature o un hito, genera el deck y ábrelo para auditar cada afirmación frente a `result`, los archivos y las pruebas reales. Usa `continue` sobre `presenterJob` o vuelve a generar la presentación con correcciones concretas si hace falta. Comparte la ruta/enlace con el dueño solo después de aprobar la revisión; `present` no lo entrega ni lo publica automáticamente.
 
 ## Mejora continua (plugin `improve`)
 `improve {cwd?, focus?, worker?}` lanza un agente (el router usa `kind: docs`) en un **worktree**: analiza el repositorio y escribe `docs/backlog/<YYYY-MM-DD>-<focus>.md` con ítems priorizados (id, título, impacto, esfuerzo, riesgo y evidencia) y un brief autocontenido por ítem, listo para delegar con TDD/código limpio/DRY. `focus`: `backlog`, `features`, `debt` o `all` (defecto). Fusiona su rama como cualquier job (`diff`/`review`/`merge`).
 
 Con `plugins.improve: {enabled: true, hints: true}` hay invitaciones (nunca asedio):
-- `report` añade `next` con la sugerencia de ronda cerrada y los foci que **no** se lanzaron en las últimas 24 h para ese repositorio.
+- `report` añade `next` con la sugerencia de generar y auditar el deck, además de los foci de `improve` que **no** se lanzaron en las últimas 24 h para ese repositorio.
 - `wait` añade `hint` cuando todos los jobs terminaron y no hay `improve` reciente.
 - El prompt MCP **`continuous-improvement`** describe la ronda completa: `workers → run_many → wait → review → merge → report → improve`.
 

@@ -21,6 +21,13 @@ process.stdout.write('this is not json\n');
 
 if (prompt.includes('COLMENA_REPORT') && process.env.FAKE_REPORT === 'fail') { process.stderr.write('boom: reporter down\n'); process.exit(1); }
 if (prompt.includes('COLMENA_REPORT') && process.env.FAKE_REPORT !== 'skip') fs.writeFileSync(path.join(cwd, 'report.html'), '<!doctype html><html><body><h1>fake report</h1>' + '<p>relleno</p>'.repeat(60) + '</body></html>');
+if (prompt.includes('COLMENA_PRESENT') && process.env.FAKE_PRESENT === 'fail') { process.stderr.write('boom: presenter down\n'); process.exit(1); }
+if (prompt.includes('COLMENA_PRESENT') && process.env.FAKE_PRESENT !== 'skip') {
+  const html = process.env.FAKE_PRESENT === 'invalid'
+    ? '<!doctype html><html><body>fake presentation without slides</body></html>'
+    : '<!doctype html><html><body><h1>fake presentation</h1>' + '<section class="slide">uno</section><section class="slide">dos</section><section class="slide">tres</section>' + '<p>contenido de la presentación</p>'.repeat(40) + '</body></html>';
+  fs.writeFileSync(path.join(cwd, 'deck.html'), html);
+}
 if (prompt.includes('SLEEP')) setTimeout(() => {}, 600000);
 else if (prompt.includes('FAIL')) { process.stderr.write('boom: fake failure\n'); process.exit(1); }
 else setTimeout(() => {

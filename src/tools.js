@@ -8,6 +8,7 @@ import * as iso from './isolation.js';
 import { notifyPlugin } from './plugins/notify.js';
 import { createNotifier } from './notifier.js';
 import { generateReport } from './plugins/report.js';
+import { generatePresentation } from './plugins/present.js';
 import { computeStats, DAY_MS } from './stats.js';
 import { buildImprovePrompt, hasRecentImprove, PENDING_FOCUSES, CONTINUOUS_IMPROVEMENT_PROMPT } from './plugins/improve.js';
 import { writeFileAtomic } from './atomic-write.js';
@@ -120,6 +121,16 @@ export function buildServer(config, { atomicWriteDependencies } = {}) {
     a => generateReport({ jm, config, ids: a.job_ids, style: a.style, title: a.title, subtitle: a.subtitle, open: a.open }));
   if (!config.settings.plugins.report.enabled) reportTool.disable();
 
+  const presentTool = tool('present', 'Genera una presentación HTML autocontenida en estilo papercraft para cerrar un hito; el rol presenter la redacta y, si falla, se crea un respaldo determinista.',
+    {
+      job_ids: z.array(z.string()).min(1), title: z.string().optional(), subtitle: z.string().optional(),
+      notes: z.string().optional().describe('Objetivo del hito, decisiones y riesgos del orquestador'),
+      style: z.string().optional().describe('Nombre de estilo (carpeta styles/<nombre>); defecto: plugins.present.default_style'),
+      open: z.boolean().optional().describe('Abrir en el navegador al terminar'),
+    },
+    a => generatePresentation({ jm, config, ids: a.job_ids, title: a.title, subtitle: a.subtitle, notes: a.notes, style: a.style, open: a.open }));
+  if (!config.settings.plugins.present.enabled) presentTool.disable();
+
   const improveTool = tool('improve', 'Mejora continua: un agente analiza el repo en un worktree y escribe docs/backlog/<fecha>-<focus>.md con ítems priorizados (impacto, esfuerzo, riesgo) y briefs listos para delegar con TDD y DRY.',
     {
       cwd: z.string().optional().describe('Repositorio a analizar (defecto: cwd del servidor)'),
@@ -147,6 +158,7 @@ export function buildServer(config, { atomicWriteDependencies } = {}) {
     const next = config.reloadSettings();
     notify.update(next.plugins.notify);
     if (next.plugins.report.enabled) reportTool.enable(); else reportTool.disable();
+    if (next.plugins.present.enabled) presentTool.enable(); else presentTool.disable();
     if (next.plugins.improve.enabled) { improveTool.enable(); improvePrompt.enable(); } else { improveTool.disable(); improvePrompt.disable(); }
     return settingsDiff(previous, next);
   });

@@ -22,7 +22,7 @@ const Worker = z.object({
   price_per_mtok: z.object({ input: z.number().nonnegative(), output: z.number().nonnegative() }).optional(),
 });
 
-const Roles = z.object({ reporter: z.string(), summarizer: z.string(), reviewer: z.string() });
+const Roles = z.object({ reporter: z.string(), summarizer: z.string(), reviewer: z.string(), presenter: z.string() });
 const Defaults = z.object({ worker: z.string(), max_parallel: z.number().int().positive().default(4), timeout_min: z.number().positive().default(60) });
 const Preferences = z.object({ provider: z.enum(['auto', 'codex', 'opencode']).default('auto') });
 const Notify = z.object({
@@ -31,6 +31,7 @@ const Notify = z.object({
   heartbeat_min: z.number().positive().default(10),
 });
 const Report = z.object({ enabled: z.boolean().default(true), default_style: z.string().default('papercraft') });
+const Present = z.object({ enabled: z.boolean().default(true), default_style: z.string().default('papercraft-deck') });
 const Improve = z.object({ enabled: z.boolean().default(true), hints: z.boolean().default(true) });
 const Standards = z.object({ enabled: z.boolean().default(true), preamble: z.string().min(1).default(DEFAULT_STANDARDS_PREAMBLE) });
 const Providers = z.object({
@@ -45,10 +46,10 @@ export const DEFAULT_SETTINGS = {
     // max-hive: massive parallel bulk work at ~zero cost on a Go "contributor" model (no zero data retention). See README "max-hive".
     'max-hive': { provider: 'opencode', model: 'opencode-go/muse-spark-1.3-contributor', effort: 'high', priority: 9, strengths: ['bulk'], budget: { monthly_usd: 5 } },
   },
-  roles: { reporter: 'ds-flash', summarizer: 'ds-flash', reviewer: 'luna-max' },
+  roles: { reporter: 'ds-flash', summarizer: 'ds-flash', reviewer: 'luna-max', presenter: 'luna-max' },
   defaults: { worker: 'luna-max', max_parallel: 4, timeout_min: 60 },
   preferences: { provider: 'auto' },
-  plugins: { notify: {}, report: {}, improve: {} },
+  plugins: { notify: {}, report: {}, present: {}, improve: {} },
   standards: { enabled: true, preamble: DEFAULT_STANDARDS_PREAMBLE },
   providers: { opencode: { isolate_config: true } },
 };
@@ -64,7 +65,12 @@ export function loadSettings(home, env = process.env) {
   }
   const merged = {
     workers: user.workers ?? DEFAULT_SETTINGS.workers,
-    roles: { ...DEFAULT_SETTINGS.roles, ...(user.roles ?? {}) },
+    // A config that defines its own workers cannot be expected to know the default presenter alias: use its default worker.
+    roles: {
+      ...DEFAULT_SETTINGS.roles,
+      ...(user.workers && !user.roles?.presenter ? { presenter: (user.defaults ?? {}).worker ?? DEFAULT_SETTINGS.defaults.worker } : {}),
+      ...(user.roles ?? {}),
+    },
     defaults: { ...DEFAULT_SETTINGS.defaults, ...(user.defaults ?? {}) },
     preferences: user.preferences == null ? DEFAULT_SETTINGS.preferences
       : typeof user.preferences === 'object' && !Array.isArray(user.preferences)
@@ -73,6 +79,7 @@ export function loadSettings(home, env = process.env) {
     plugins: {
       notify: { ...DEFAULT_SETTINGS.plugins.notify, ...(user.plugins?.notify ?? {}) },
       report: { ...DEFAULT_SETTINGS.plugins.report, ...(user.plugins?.report ?? {}) },
+      present: { ...DEFAULT_SETTINGS.plugins.present, ...(user.plugins?.present ?? {}) },
       improve: { ...DEFAULT_SETTINGS.plugins.improve, ...(user.plugins?.improve ?? {}) },
     },
     standards: user.standards == null ? DEFAULT_SETTINGS.standards
@@ -94,7 +101,7 @@ export function loadSettings(home, env = process.env) {
   const schema = z.object({
     workers: z.record(z.string(), Worker).refine(w => Object.keys(w).length > 0, 'debe haber al menos un worker'),
     roles: Roles, defaults: Defaults, preferences: Preferences,
-    plugins: z.object({ notify: Notify, report: Report, improve: Improve }),
+    plugins: z.object({ notify: Notify, report: Report, present: Present, improve: Improve }),
     standards: Standards,
     providers: Providers,
   });

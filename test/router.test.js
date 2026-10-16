@@ -16,7 +16,7 @@ workers:
   b: {provider: opencode, model: m2, priority: 2, strengths: [docs]}
   c: {provider: opencode, model: m3, priority: 3, strengths: [docs, summary], enabled: false}
   d: {provider: opencode, model: m4, priority: 4, strengths: [code]}
-roles: {reporter: b, summarizer: b, reviewer: a}
+roles: {reporter: b, summarizer: b, reviewer: a, presenter: a}
 defaults: {worker: a}
 `;
 const ledgerFor = (now = () => new Date('2026-10-16T10:00:00Z')) => createLedger({ usagePath: path.join(tmp('colmena-lg-'), 'usage.json') }, { now });
@@ -75,7 +75,7 @@ test('pickWorker: nothing available → error', () => {
   const s = settingsFor(`
 workers:
   a: {provider: codex, model: m1, budget: {monthly_usd: 1}}
-roles: {reporter: a, summarizer: a, reviewer: a}
+roles: {reporter: a, summarizer: a, reviewer: a, presenter: a}
 defaults: {worker: a}
 `);
   const l = ledgerFor(); l.record('a', {}, 2);
@@ -88,7 +88,7 @@ test('JobManager: cost recorded, budget exhausts, routing falls to next worker',
 workers:
   cheap: {provider: opencode, model: m, priority: 1, budget: {monthly_usd: 0.015}}
   backup: {provider: opencode, model: m, priority: 2}
-roles: {reporter: backup, summarizer: backup, reviewer: backup}
+roles: {reporter: backup, summarizer: backup, reviewer: backup, presenter: backup}
 defaults: {worker: cheap}
 plugins: {notify: {enabled: false}}
 `);

@@ -8,29 +8,36 @@ import { jobMetrics } from '../job-metrics.js';
 const BUILTIN_STYLES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'styles');
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
 
-const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+export const escapeHtml = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const esc = escapeHtml;
 const para = s => esc(s).replace(/\n/g, '<br>');
-const fmtDuration = s => (s < 90 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`);
-const slugify = t => (String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)) || 'informe';
+export const formatDuration = s => (s < 90 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`);
+const fmtDuration = formatDuration;
+export const slugify = t => (String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)) || 'informe';
 
-export function listStyles(config) {
+function hasTemplate(dir, marker) {
+  const template = path.join(dir, 'template.html');
+  return fs.existsSync(template) && (!marker || fs.readFileSync(template, 'utf8').includes(marker));
+}
+
+export function listStyles(config, { marker } = {}) {
   const names = new Set();
   for (const base of [path.join(config.home, 'styles'), BUILTIN_STYLES]) {
     try {
       for (const d of fs.readdirSync(base, { withFileTypes: true })) {
-        if (d.isDirectory() && fs.existsSync(path.join(base, d.name, 'template.html'))) names.add(d.name);
+        if (d.isDirectory() && hasTemplate(path.join(base, d.name), marker)) names.add(d.name);
       }
     } catch { /* missing dir */ }
   }
   return [...names].sort();
 }
 
-function resolveStyle(config, name) {
+export function resolveStyle(config, name, { marker } = {}) {
   for (const base of [path.join(config.home, 'styles'), BUILTIN_STYLES]) {
     const dir = path.join(base, name);
-    if (fs.existsSync(path.join(dir, 'template.html'))) return dir;
+    if (hasTemplate(dir, marker)) return dir;
   }
-  throw new Error(`estilo '${name}' no existe; disponibles: ${listStyles(config).join(', ') || '(ninguno)'}`);
+  throw new Error(`estilo '${name}' no existe; disponibles: ${listStyles(config, { marker }).join(', ') || '(ninguno)'}`);
 }
 
 export function buildReportData(jm, ids, { title = 'Informe de Colmena', subtitle } = {}) {
@@ -87,13 +94,16 @@ Escribe el resultado en ${path.join(dir, 'report.html')} (un solo archivo autoco
 function nextSuggestions(jm, ids, config) {
   const { enabled, hints } = config.settings.plugins.improve;
   if (!enabled || !hints) return null;
-  return improveNext(jm, jm.meta(ids[0]).cwd);
+  const suggestions = improveNext(jm, jm.meta(ids[0]).cwd);
+  const closesWork = ids.some(id => !jm.meta(id).improveFocus);
+  if (config.settings.plugins.present.enabled && closesWork && suggestions.length) suggestions.unshift('hito cerrado: genera y audita la presentación con `present`');
+  return suggestions;
 }
 
 export async function generateReport({ jm, config, ids, style, title, subtitle, open = false }) {
   if (!ids?.length) throw new Error('indica al menos un job_id');
   const styleName = style ?? config.settings.plugins.report.default_style;
-  const styleDir = resolveStyle(config, styleName);
+  const styleDir = resolveStyle(config, styleName, { marker: '<!--COLMENA:CARDS-->' });
   const data = buildReportData(jm, ids, { title: title || undefined, subtitle });
 
   const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 12);

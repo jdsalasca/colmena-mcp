@@ -45,6 +45,7 @@ roles:                         # quién hace los trabajos auxiliares
   reporter: ds-flash           # tool report
   summarizer: ds-flash         # tools summarize / compact
   reviewer: luna-max           # tool review
+  presenter: luna-max          # tool present (Codex Luna max)
 
 defaults:
   worker: luna-max
@@ -59,6 +60,9 @@ plugins:
   report:
     enabled: true
     default_style: papercraft
+  present:
+    enabled: true
+    default_style: papercraft-deck
   improve:
     enabled: true      # tool `improve`, prompt MCP continuous-improvement e invitaciones
     hints: true        # next en report / hint en wait; false los silencia sin ocultar la tool

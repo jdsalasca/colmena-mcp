@@ -1,6 +1,6 @@
 ---
 name: colmena-delegation
-description: Use when delegating implementation work to the Colmena MCP (Codex/Luna and OpenCode/DeepSeek workers). Explains how to pick a worker, write briefs, run rounds in parallel, validate quality like a product manager, merge, and close with an HTML report, while spending few orchestrator tokens.
+description: Use when delegating implementation work to the Colmena MCP (Codex/Luna and OpenCode/DeepSeek workers). Explains how to pick a worker, write briefs, run rounds in parallel, validate quality like a product manager, merge, and close with an HTML report and papercraft milestone presentation, while spending few orchestrator tokens.
 ---
 
 # Orquestar la colmena
@@ -23,7 +23,9 @@ Objetivo y *por qué* · rutas exactas (`context_files`) y qué NO tocar · crit
 3. `result` en `min`; solo `normal`/`full` si hace falta. Si `reportOk` es false lee `text`.
 4. **Valida como PM:** `review` (rol reviewer) y/o `diff`; corre tú los tests en la rama si es crítico. Si falta algo: `continue` con feedback concreto (mismo worker y sesión).
 5. Encadenar: `compact` del primero → `handoff` con `from: [id]`.
-6. `merge` (manual; `squash` para historial limpio) → **`report`** con los `job_ids` de la ronda (estilo `papercraft`; `open: true` para abrirlo) → `cleanup`.
+6. `merge` (manual; `squash` para historial limpio) → **`report`** con los `job_ids` de la ronda (estilo `papercraft`) → **`present`** para cerrar cada feature/hito con los mismos `job_ids` (`luna-max` redacta el deck por defecto; `open: true` lo abre).
+7. **Audita el deck antes de compartirlo:** abre `deck.html`, contrasta cada dato con `result`, `review`/`diff` y las pruebas; verifica objetivo, decisiones y riesgos en `notes`. Si hay errores, continúa `presenterJob` con instrucciones concretas o vuelve a llamar `present` con notas de corrección. Comparte la ruta/enlace con el dueño solo cuando la presentación pase esta revisión.
+8. `cleanup` cuando corresponda; `present` crea su carpeta dentro de `reports/` y no publica el archivo.
 
 ## 4. Ahorro de tokens
 Quédate en `detail: "min"`; los logs completos están en disco. No releas lo ya reportado: pide `summarize`. Si un job falla o hace timeout, lee `error` antes de relanzar y cambia algo del brief.
