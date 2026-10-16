@@ -53,6 +53,7 @@ defaults:
   max_parallel: 4
   timeout_min: 60
   exit_grace_s: 20  # tras entrega final de Codex, espera antes de matar el proceso colgado
+  wait_max_s: 600   # tope de cada espera wait/run (1 a 1800 s); sube hasta 1800 para jobs largos
 
 plugins:
   notify:

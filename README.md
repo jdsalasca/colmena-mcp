@@ -38,7 +38,7 @@ workers:
   ds-flash:       {provider: opencode, model: opencode-go/deepseek-v4.1-flash, effort: max, priority: 2, strengths: [code, docs, summary, report], budget: {monthly_usd: 10}}
   max-hive:       {provider: opencode, model: opencode-go/muse-spark-1.3-contributor, effort: high, priority: 9, strengths: [bulk], budget: {monthly_usd: 5}}
 roles:    {reporter: ds-flash, summarizer: ds-flash, reviewer: luna-max, presenter: luna-max}
-defaults: {worker: luna-max, max_parallel: 4, timeout_min: 60, exit_grace_s: 20}
+defaults: {worker: luna-max, max_parallel: 4, timeout_min: 60, exit_grace_s: 20, wait_max_s: 600}
 preferences: {provider: auto} # codex | opencode para priorizar un proveedor sin reiniciar
 plugins:
   notify: {enabled: true, on: [start, finish, fail], heartbeat_min: 10}
@@ -58,7 +58,7 @@ providers:
 
 Notas:
 - `defaults.exit_grace_s` (20 s) da tiempo al proceso de Codex para salir después de entregar su mensaje final y emitir `turn.completed`. Si sigue activo al vencer, Colmena mata el árbol del proceso y termina el job como `done`, con `finishedByGrace: true` y un mensaje en el resultado. Si llega antes el timeout general pero Codex ya entregó, también queda `done`; OpenCode no usa esta gracia porque `step_finish` puede ser solo un paso intermedio. Edita el YAML y llama a `reload_config` para aplicar workers, roles, defaults, plugins y proveedores sin reiniciar.
-- `COLMENA_MAX_PARALLEL`, `COLMENA_JOB_TIMEOUT_MIN` y `COLMENA_EXIT_GRACE_S` conservan prioridad sobre los valores YAML.
+- `COLMENA_MAX_PARALLEL`, `COLMENA_JOB_TIMEOUT_MIN`, `COLMENA_EXIT_GRACE_S` y `COLMENA_WAIT_MAX_S` conservan prioridad sobre los valores YAML.
 - `preferences.provider` acepta `auto` (ruteo actual), `codex` u `opencode`. La tool `preferences` consulta la preferencia y el worker elegido ahora, o la cambia en memoria y en el YAML efectivo (`COLMENA_CONFIG` o `$COLMENA_HOME/colmena.yml`) para el siguiente `run`; no requiere reinicio. Si no hay workers disponibles de ese proveedor, el router usa otro y devuelve un `note`. `worker` explícito siempre manda; las tools auxiliares continúan usando sus roles.
 - `workers` muestra `free` por worker; `stats {since_days?}` resume jobs, éxito, duración, costo registrado y `nominalCostUsd` por worker, tokens, tipos y fallos de la ventana indicada (30 días por defecto).
 - `workers.<alias>.free: true` declara que el modelo de ese worker está cubierto a costo cero: el ledger registra `cost_usd: 0`, `meta.json` conserva `nominalCostUsd` y `result` muestra `cost_usd: 0` junto con `nominal_cost_usd`. El flag exime al worker de su presupuesto mensual. Úsalo solo si tu plan garantiza el costo cero; el costo nominal sigue visible para auditar lo que reportó el proveedor.
@@ -78,7 +78,7 @@ Notas:
 - **Cómo buscarle otro modelo (para Claude):** `node scripts/opencode-models.mjs --contributor` lista los *contributor* del más barato al más caro; `--max-out 0.6 --json` filtra por precio. Elige el más barato con ventana de contexto suficiente, cambia `model`/`effort` en `colmena.yml` (si no ofrece `max`, usa su mejor variante), llama `reload_config`, y valídalo con una ejecución real (`run` con `worker: "max-hive"`, `isolation: "readonly"`) revisando `cost_usd` y que el reporte salga en formato RESULT/FILES/TESTS/RISKS.
 
 ### Variables de entorno
-`COLMENA_HOME`, `COLMENA_CONFIG`, `COLMENA_CODEX_BIN`, `COLMENA_OPENCODE_BIN`, `COLMENA_MAX_PARALLEL`, `COLMENA_JOB_TIMEOUT_MIN`, `COLMENA_EXIT_GRACE_S`, `COLMENA_NOTIFIER` (`toast`|`log`|`none`). Los nombres `LUNA_*` de la v0.1 se siguen aceptando.
+`COLMENA_HOME`, `COLMENA_CONFIG`, `COLMENA_CODEX_BIN`, `COLMENA_OPENCODE_BIN`, `COLMENA_MAX_PARALLEL`, `COLMENA_JOB_TIMEOUT_MIN`, `COLMENA_EXIT_GRACE_S`, `COLMENA_WAIT_MAX_S`, `COLMENA_NOTIFIER` (`toast`|`log`|`none`). Los nombres `LUNA_*` de la v0.1 se siguen aceptando.
 
 ## Herramientas
 
@@ -89,7 +89,7 @@ Notas:
 | `stats` | Resumen histórico por estado, worker y tipo (`since_days`, defecto 30) |
 | `reload_config` | Relee y valida `colmena.yml`; jobs posteriores usan los cambios sin reiniciar |
 | `run` / `run_many` | Lanza uno o varios agentes (`worker?`, `kind?`, `isolation?`, `wait: true` espera el reporte) |
-| `wait`, `status`, `list` | Seguimiento (`wait` máx. 600 s, `mode: any/all`; añade `hint` de mejora continua al cerrar una ronda) |
+| `wait`, `status`, `list` | Seguimiento (`wait` hasta `defaults.wait_max_s`, defecto 600 s, tope 1800 s; `timeout_s` entre 1 y 1800; al vencer devuelve `pending` con estado y `elapsedS` sin cancelar; `mode: any/all`; añade `hint` de mejora continua al cerrar una ronda) |
 | `result` | Reporte `RESULT/FILES/TESTS/RISKS`, archivos, diffstat, rama, worker, modelo, proveedor, esfuerzo y costos registrado/nominal |
 | `diff` | Diff truncado; el completo queda en disco |
 | `continue` | Reanuda la sesión (mismo worker y workdir) |
