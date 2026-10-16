@@ -7,6 +7,9 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { getConfig } from '../src/config.js';
+import { buildServer } from '../src/tools.js';
 
 import { baseEnv, codexOnlyHome } from './helpers.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -157,9 +160,9 @@ test('preferences gets current routing, changes the next run, persists comments,
     COLMENA_OPENCODE_BIN: path.join(here, 'fake-opencode.js'), FAKE_LOG: log,
   });
   try {
-    assert.deepEqual(await call('preferences', {}), { provider: 'auto', worker: 'luna' });
+    assert.deepEqual(await call('preferences', {}), { provider: 'auto', worker: 'luna', would_choose: 'luna' });
     const selected = await call('preferences', { provider: 'opencode' });
-    assert.deepEqual(selected, { provider: 'opencode', worker: 'flash' });
+    assert.deepEqual(selected, { provider: 'opencode', worker: 'flash', would_choose: 'flash' });
     const rows = await call('workers', {});
     assert.equal(rows.find(row => row.alias === 'flash').preferred, true);
     assert.equal(rows.find(row => row.alias === 'luna').preferred, false);
@@ -193,10 +196,78 @@ test('preferences creates the effective config file when absent', async () => {
   const file = path.join(home, 'nested', 'colmena.yml');
   const { client, call } = await connect({ COLMENA_HOME: home, COLMENA_CONFIG: file });
   try {
-    assert.deepEqual(await call('preferences', { provider: 'opencode' }), { provider: 'opencode', worker: 'ds-flash' });
+    assert.deepEqual(await call('preferences', { provider: 'opencode' }), { provider: 'opencode', worker: 'ds-flash', would_choose: 'ds-flash' });
     assert.match(fs.readFileSync(file, 'utf8'), /preferences:\s+provider: opencode/);
     assert.deepEqual(fs.readdirSync(path.dirname(file)).filter(name => name.includes('.tmp')), []);
   } finally { await client.close(); }
+});
+
+for (const [label, original] of [['vacío', ''], ['solo comentarios', '# comentario conservado\n# otra nota\n']]) {
+  test(`preferences añade su clave a un archivo ${label}`, async () => {
+    const { home, file } = providerHome();
+    const { client, call } = await connect({ COLMENA_HOME: home, COLMENA_CONFIG: file });
+    try {
+      fs.writeFileSync(file, original);
+      const result = await call('preferences', { provider: 'opencode' });
+      assert.equal(result.provider, 'opencode');
+      assert.equal(result.would_choose, 'flash');
+      const saved = fs.readFileSync(file, 'utf8');
+      assert.match(saved, /preferences:\s+provider: opencode/);
+      if (original) assert.match(saved, /# comentario conservado/);
+    } finally { await client.close(); }
+  });
+}
+
+test('preferences guarda el cambio aunque no haya workers y devuelve would_choose nulo', async () => {
+  const { home, file } = providerHome({ codexEnabled: false });
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('strengths: [code, docs]}', 'strengths: [code, docs], enabled: false}'));
+  const { client, call } = await connect({ COLMENA_HOME: home, COLMENA_CONFIG: file });
+  try {
+    const result = await call('preferences', { provider: 'codex' });
+    assert.equal(result.provider, 'codex');
+    assert.equal(result.worker, null);
+    assert.equal(result.would_choose, null);
+    assert.match(result.note, /preferencia guardada.*router no pudo calcular.*ningún worker disponible/i);
+    assert.match(fs.readFileSync(file, 'utf8'), /provider: codex/);
+    const workers = await call('workers', {});
+    assert.equal(workers.every(worker => !worker.available), true);
+    assert.equal(workers.filter(worker => worker.provider === 'codex').every(worker => worker.preferred), true);
+  } finally { await client.close(); }
+});
+
+test('preferences conserva archivo y memoria si falla el rename', async () => {
+  const { home, file } = providerHome();
+  const original = fs.readFileSync(file, 'utf8');
+  const config = getConfig({
+    ...process.env,
+    COLMENA_HOME: home,
+    COLMENA_CONFIG: file,
+    COLMENA_CODEX_BIN: path.join(here, 'fake-codex.js'),
+    COLMENA_OPENCODE_BIN: path.join(here, 'fake-opencode.js'),
+    COLMENA_NOTIFIER: 'none',
+  });
+  const { server } = buildServer(config, {
+    atomicWriteDependencies: { renameSync: () => { throw new Error('rename failure for test'); } },
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'injected-test', version: '0' });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const call = async (name, args) => {
+    const r = await client.callTool({ name, arguments: args });
+    const text = r.content[0].text;
+    return r.isError ? { error: text } : JSON.parse(text);
+  };
+  try {
+    const failed = await call('preferences', { provider: 'opencode' });
+    assert.match(failed.error, /rename failure for test/);
+    assert.equal(fs.readFileSync(file, 'utf8'), original);
+    assert.equal((await call('workers', {})).every(worker => !worker.preferred), true);
+    assert.deepEqual(fs.readdirSync(home).filter(name => name.endsWith('.tmp')), []);
+  } finally {
+    await client.close();
+    await server.close();
+  }
 });
 
 test('preferences falls back across providers with a note, and reload_config reads manual edits', async () => {
@@ -208,7 +279,7 @@ test('preferences falls back across providers with a note, and reload_config rea
   });
   try {
     assert.deepEqual(await call('preferences', {}), {
-      provider: 'codex', worker: 'flash', note: 'sin workers disponibles de codex; se usó flash',
+      provider: 'codex', worker: 'flash', would_choose: 'flash', note: 'sin workers disponibles de codex; se usó flash',
     });
     const fallback = await call('run', { task: 'usar fallback', cwd: tmp('colmena-pref-fallback-'), wait: true });
     assert.equal(fallback.worker, 'flash');
@@ -217,7 +288,7 @@ test('preferences falls back across providers with a note, and reload_config rea
     fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('provider: codex', 'provider: opencode'));
     const diff = await call('reload_config', {});
     assert.deepEqual(diff.preferences, ['provider']);
-    assert.deepEqual(await call('preferences', {}), { provider: 'opencode', worker: 'flash' });
+    assert.deepEqual(await call('preferences', {}), { provider: 'opencode', worker: 'flash', would_choose: 'flash' });
   } finally { await client.close(); }
 });
 
