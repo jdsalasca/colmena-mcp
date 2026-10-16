@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
 import { getConfig } from '../src/config.js';
 import { createJobManager } from '../src/jobs.js';
-import { notifyPlugin } from '../src/plugins/notify.js';
+import { formatOverview, notifyPlugin } from '../src/plugins/notify.js';
 import { createNotifier } from '../src/notifier.js';
 import { baseEnv, codexOnlyHome, tmp, here } from './helpers.js';
 
@@ -20,6 +21,76 @@ function setup(opts = {}, notifyCfg = {}) {
   return { config, jm, sent, plugin };
 }
 const S = (task, extra = {}) => ({ task, cwd: tmp('colmena-c-'), isolation: 'inplace', ...extra });
+
+function directNotify({ active = [], queued = 0, debounceMs = 0 } = {}) {
+  const bus = new EventEmitter(); const sent = []; const timers = [];
+  const logPath = path.join(tmp('colmena-notify-'), 'activity.log');
+  let snapshot = { active, queued };
+  const plugin = notifyPlugin({
+    bus,
+    jm: { active: () => snapshot.active, stats: () => ({ running: snapshot.active.length, queued: snapshot.queued }) },
+    cfg: { enabled: true, on: ['start', 'finish', 'fail'], heartbeat_min: 10 },
+    notifier: { send: n => sent.push(n) }, heartbeatMs: 100000, debounceMs, logPath,
+    setIntervalFn: fn => { const timer = { fn, unref() {} }; timers.push(timer); return timer; },
+    clearIntervalFn() {},
+  });
+  return { bus, sent, plugin, logPath, timers, setSnapshot: next => { snapshot = next; } };
+}
+
+test('formatOverview groups running providers and reports queued/unknown work', () => {
+  assert.equal(formatOverview([], 0), 'En curso: ninguno');
+  assert.equal(formatOverview([{ provider: 'codex' }, { provider: 'codex' }], 0), 'En curso: codex 2');
+  assert.equal(formatOverview([{ provider: 'opencode' }, { provider: 'codex' }], 0), 'En curso: codex 1 · opencode 1');
+  assert.equal(formatOverview([{ provider: 'codex' }], 3), 'En curso: codex 1 · +3 en cola');
+  assert.equal(formatOverview([], 2), 'En curso: ninguno · +2 en cola');
+  assert.equal(formatOverview([{}], 0), 'En curso: desconocido 1');
+});
+
+test('notifications group starts by provider and append a fresh overview to all four types', async () => {
+  const h = directNotify();
+  h.setSnapshot({ active: [{ provider: 'codex' }, { provider: 'codex' }, { provider: 'opencode' }], queued: 1 });
+  h.bus.emit('job.started', { worker: 'luna-max', provider: 'codex' });
+  h.bus.emit('job.started', { worker: 'luna-max', provider: 'codex' });
+  h.bus.emit('job.started', { worker: 'ds-flash', provider: 'opencode' });
+  await sleep(25);
+  const start = h.sent.find(n => n.kind === 'start');
+  assert.match(start.body, /luna-max \(codex\)×2, ds-flash \(opencode\)/);
+  assert.ok(start.body.endsWith('En curso: codex 2 · opencode 1 · +1 en cola'));
+
+  h.setSnapshot({ active: [{ provider: 'codex' }], queued: 0 });
+  h.bus.emit('job.finished', { worker: 'luna-max', provider: 'codex', task: 'terminar', state: 'done', costUsd: 0 });
+  await sleep(25);
+  const finish = h.sent.find(n => n.kind === 'finish');
+  assert.match(finish.body, /^\[codex\] luna-max: terminar → terminó · \$0\.00/);
+  assert.ok(finish.body.endsWith('En curso: codex 1'));
+
+  h.setSnapshot({ active: [{ provider: 'desconocido' }], queued: 0 });
+  h.bus.emit('job.finished', { worker: 'worker-x', task: 'rompió', state: 'failed', error: 'boom', costUsd: 0 });
+  await sleep(25);
+  const fail = h.sent.find(n => n.kind === 'fail');
+  assert.match(fail.body, /^\[desconocido\] worker-x falló: boom/);
+  assert.ok(fail.body.endsWith('En curso: desconocido 1'));
+
+  h.setSnapshot({ active: [{ provider: 'opencode' }, { provider: 'opencode' }], queued: 2 });
+  h.timers[0].fn();
+  const heartbeat = h.sent.find(n => n.kind === 'heartbeat');
+  assert.ok(heartbeat.body.endsWith('En curso: opencode 2 · +2 en cola'));
+  const log = fs.readFileSync(h.logPath, 'utf8');
+  assert.ok(log.includes(`${start.title}: ${start.body}`), 'activity.log keeps the complete sent body');
+  h.plugin.stop();
+});
+
+test('finish toast truncates a long task while preserving the overview under 300 characters', async () => {
+  const h = directNotify({ active: [{ provider: 'codex' }] });
+  h.bus.emit('job.finished', { worker: 'luna-max', provider: 'codex', task: 't'.repeat(1000), state: 'done', costUsd: 0 });
+  await sleep(25);
+  const body = h.sent.find(n => n.kind === 'finish').body;
+  assert.ok(body.length <= 300, `toast length=${body.length}`);
+  assert.ok(body.includes('t'.repeat(60)));
+  assert.ok(!body.includes('t'.repeat(61)));
+  assert.ok(body.endsWith('En curso: codex 1'));
+  h.plugin.stop();
+});
 
 test('3 launches inside the window → one start toast mentioning 3', async () => {
   const { jm, sent, plugin } = setup({ heartbeatMs: 100000 });
@@ -82,6 +153,31 @@ test('heartbeat timer does not keep the process alive', () => {
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 8000 });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /done/);
+});
+test('update replaces notification filter and restarts heartbeat timer', async () => {
+  const bus = new EventEmitter(); const timers = []; const cleared = []; const sent = [];
+  const plugin = notifyPlugin({
+    bus,
+    jm: { stats: () => ({ running: 0, queued: 0 }), active: () => [] },
+    cfg: { enabled: true, on: ['start'], heartbeat_min: 5 },
+    notifier: { send: n => sent.push(n) }, debounceMs: 0,
+    setIntervalFn: (fn, ms) => { const timer = { fn, ms, unref() {} }; timers.push(timer); return timer; },
+    clearIntervalFn: timer => cleared.push(timer),
+  });
+  assert.equal(timers[0].ms, 300000);
+  plugin.update({ enabled: true, on: ['finish'], heartbeat_min: 2 });
+  assert.deepEqual(cleared, [timers[0]]);
+  assert.equal(timers[1].ms, 120000);
+  bus.emit('job.started', { worker: 'a' });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(sent.some(n => n.kind === 'start'), false);
+  bus.emit('job.finished', { worker: 'a', task: 'x', state: 'done', costUsd: 0 });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(sent.some(n => n.kind === 'finish'), true);
+  plugin.update({ enabled: false, on: ['start'], heartbeat_min: 1 });
+  assert.deepEqual(cleared, [timers[0], timers[1]]);
+  assert.equal(timers.length, 2);
+  plugin.stop();
 });
 test('createNotifier: none/log never throw; toast returns an object with send', () => {
   assert.doesNotThrow(() => createNotifier('none').send({ title: 't', body: 'b' }));

@@ -51,3 +51,18 @@ test('summarize/review run read-only; summarize is ephemeral', async () => {
     assert.match(sc.prompt, /foco/);
   });
 });
+test('standard preamble goes to run jobs but not helper jobs', async () => {
+  await withLog(async log => {
+    const { jm, config } = mk();
+    config.settings.standards = { enabled: true, preamble: 'PREÁMBULO PRIVADO DE PRUEBA' };
+    const cwd = tmp('luna-c-');
+    const run = jm.submit({ task: 'trabajo normal', cwd, isolation: 'inplace' }); await jm.wait([run]);
+    const summary = jm.summarize(run); await jm.wait([summary]);
+    const compact = jm.compact(run); await jm.wait([compact]);
+    const review = jm.review({ id: run }); await jm.wait([review]);
+    const [runCall, ...helperCalls] = calls(log);
+    assert.match(runCall.prompt, /^PREÁMBULO PRIVADO DE PRUEBA/);
+    assert.equal(helperCalls.length, 3);
+    for (const helper of helperCalls) assert.doesNotMatch(helper.prompt, /PREÁMBULO PRIVADO DE PRUEBA/);
+  });
+});

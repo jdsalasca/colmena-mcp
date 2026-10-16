@@ -41,3 +41,51 @@ Repo `colmena-mcp` (Node 24 ESM, `node --test`, zod, `@modelcontextprotocol/sdk`
 
 ## Orden y validación (lo hace el orquestador)
 1. `workers` → `run_many` con A y B (worktrees distintos). 2. `wait` → `result` → `review` de cada rama. 3. Merge de A y luego B (puede haber conflicto en `src/tools.js`/`test/server.test.js`: resolver manteniendo ambas tools; correr `npm test`). 4. `report` de la ronda (papercraft) y `improve all` sobre `colmena-mcp` como primer backlog real. 5. Actualizar README/skill (hecho por Luna dentro de cada brief si aplica).
+
+---
+
+## Ronda 1 (automejora): briefs C, D y E
+
+> Estado: el Brief A ya está integrado en `develop`. El Brief B (`improve`) sigue pendiente. Los agentes parten de `develop`.
+
+### Brief C — `stats`: datos para automejorar + internet explícito
+
+**Objetivo:** que colmena **recolecte y resuma datos de uso** (para que el orquestador y el agente `improve` decidan qué mejorar) y que los agentes sepan que tienen internet.
+
+**Requisitos**
+- Módulo puro nuevo `src/stats.js` con `computeStats(metas, {sinceMs, now})` → `{range, totals:{jobs, done, failed, cancelled, orphaned, successRate, costUsd, durationS}, byWorker:{[alias]:{runs, done, failed, successRate, avgDurationS, costUsd, inputTokens, outputTokens}}, byKind:{...}, topFailures:[{error, count}] (máx 5, mensajes truncados y agrupados)}`. Lee metas del store (`jm.list` no basta: añade un método mínimo al JobManager o al store para obtener las metas completas, sin duplicar lógica de lectura).
+- Nueva tool MCP `stats {since_days?: number}` (defecto 30) que devuelve ese objeto, compacto. Gateada por nada (siempre disponible).
+- `DEFAULT_STANDARDS_PREAMBLE` (en `src/settings.js`) añade una línea: tienen **internet** (búsqueda web en vivo / webfetch): consultar documentación y versiones actuales cuando dependan de una API o dato externo, citando la fuente. Actualiza README (sección de seguridad/agentes: "los agentes tienen internet por defecto: Codex con `--search`, OpenCode con webfetch").
+- Gestión de datos faltantes: jobs sin `startedAt/endedAt` o sin `costUsd` cuentan 0 sin lanzar excepción; lista vacía → totales en cero y `successRate: null`.
+
+**Tests primero:** `computeStats` con un conjunto fabricado (varios workers/kinds/estados, agrupación de errores, ventana `sinceMs`, metas incompletas, lista vacía); la tool `stats` por el servidor MCP (actualiza `NAMES` en `test/server.test.js`); settings: el preámbulo por defecto menciona internet.
+
+### Brief D — Prueba de `max-hive`: dedupe de escrituras de sesión (tarea pequeña y mecánica)
+
+**Objetivo:** en `src/jobs.js`, `onEvent` llama `store.update(id, {sessionId})` en **cada** evento `session` (OpenCode emite uno por paso, Codex uno). Debe escribir solo cuando el `sessionId` cambia.
+
+**Requisitos:** cambio mínimo y limpio (una variable local por job); sin tocar nada más. **Tests primero** (en `test/opencode.test.js` o `test/jobs.test.js`): con el fake de OpenCode emitiendo varios `step_start` con el mismo sessionID, `store.update` con `sessionId` se invoca una sola vez (espía `createStore` o cuenta escrituras de `meta.json` con un wrapper inyectable; elige lo más simple y estable) y el sessionId final es correcto. `npm test` verde.
+
+### Brief E — Ronda de brainstorming (solo lectura, sin código)
+
+**Objetivo:** aplicar el skill `superpowers:brainstorming` (si lo tienes) para proponer mejoras a colmena-mcp basadas en **datos reales**. Lee: `README.md`, `src/`, `test/`, los specs/planes en `docs/superpowers/`, y los datos de uso en `~/.colmena/` (`audit.log`, `usage.json`, `jobs/*/meta.json`; ignora jobs de prueba con home temporal). Identifica problemas observados (p. ej. un agente de Codex fusionó a `develop` y borró su worktree por instrucciones globales; cleanup falló al borrar una carpeta en Windows; Codex no reporta costo; wait máximo 10 min vs jobs de 10+ min).
+
+**Entrega (en el mensaje final, ≤15 líneas; no modifiques archivos):** top 8 mejoras priorizadas por (impacto / esfuerzo), cada una con: título, evidencia (dato o archivo concreto), y un brief de 2 líneas listo para delegar con enfoque TDD / código limpio / DRY. Incluye al menos 2 ideas de *nuevas features* y 2 de *deuda técnica*.
+
+---
+
+## Ronda 2 (automejora): Brief F
+
+### Brief F — Aislar la config global de OpenCode en los agentes
+
+**Evidencia (medida el 2026-10-16):** los agentes de OpenCode heredan la config global del usuario (`~/.config/opencode`: 7 servidores MCP, 3 plugins, `default_agent: chatgpt-coordinator`, AGENTS.md y skills). Consecuencias medidas: ~47k tokens de entrada por ejecución trivial (con `XDG_CONFIG_HOME` apuntando a una carpeta vacía: ~8k), `opencode-go/cat-jam-free` falla con `maximum number of items is 128` en `tools`, el job B corre con el agente coordinador del usuario durante 10+ minutos y un job de `step-5-preview` terminó en `ProviderHeaderTimeoutError`. Con config vacía: `cat-jam-free` responde y reporta `cost=0`; `deepseek-v4.1-flash` baja de $0.0074 a $0.0011 por ejecución. La autenticación NO se pierde (vive en `XDG_DATA_HOME`).
+
+**Objetivo:** que los procesos `opencode` que lanza colmena corran con una config global **aislada y mínima** por defecto, configurable.
+
+**Requisitos**
+- `startRun` (`src/runner.js`) acepta `env` opcional que se mezcla sobre `process.env`.
+- Los adaptadores pueden declarar `env(config)`; el de OpenCode devuelve `{XDG_CONFIG_HOME: <COLMENA_HOME>/opencode-config}` y la carpeta se crea si no existe. `src/jobs.js` lo pasa a `startRun` (sin duplicar lógica por proveedor).
+- Nueva sección opcional en `colmena.yml` validada con zod: `providers: {opencode: {isolate_config: true, config_dir: <ruta opcional>}}` (por defecto `isolate_config: true`). Con `false` no se toca el entorno (comportamiento anterior). `config_dir` permite al usuario ofrecer su propia config mínima (por ejemplo con un `opencode.json`). `reload_config` debe recoger los cambios (reutiliza el mecanismo existente).
+- README y `colmena.example.yml`: documenta la opción y la evidencia (números de arriba) y que los agentes de OpenCode ya no ven los MCP/plugins/agentes del usuario (los estándares llegan por el preámbulo).
+
+**Tests primero:** `startRun` pasa `env` al hijo (usa un script fake que imprime la variable); el adaptador de OpenCode expone `env`; con `isolate_config: true` el fake de OpenCode recibe `XDG_CONFIG_HOME` apuntando a la carpeta bajo `COLMENA_HOME` (amplía `test/fake-opencode.js` para registrar esa variable en `FAKE_LOG`), con `false` no la recibe, con `config_dir` recibe esa ruta; validación del YAML (tipos inválidos señalan el campo); el diff de `reload_config` refleja el cambio. Suite completa verde.

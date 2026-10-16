@@ -63,6 +63,26 @@ test('changes/diff see edits and new files in worktree', () => {
   const d = iso.diff(p.workdir, p.base, 50);
   assert.equal(d.truncated, true); assert.ok(d.text.length <= 50);
 });
+test('changes/diff are read-only: the git index stays identical', () => {
+  const c = cfg(); const r = repo();
+  const p = iso.prepare(c, { cwd: r, isolation: 'worktree', id: 'idxsafe' });
+  const w = p.workdir;
+  fs.writeFileSync(path.join(w, 'staged.txt'), 's\n'); git(w, 'add', 'staged.txt');
+  fs.appendFileSync(path.join(w, 'a.txt'), 'unstaged\n');
+  fs.writeFileSync(path.join(w, 'new.txt'), 'n\n');
+  const snapshot = () => ({ status: git(w, 'status', '--porcelain'), tree: git(w, 'write-tree') });
+  const before = snapshot();
+
+  const ch = iso.changes(w, p.base);
+  const d = iso.diff(w, p.base);
+  assert.deepEqual(ch.files.sort(), ['a.txt', 'new.txt', 'staged.txt']);
+  assert.match(ch.diffstat, /3 files? changed/);
+  assert.ok(d.text.includes('new.txt'));
+  assert.deepEqual(snapshot(), before);
+
+  iso.changes(w); iso.diff(w);
+  assert.deepEqual(snapshot(), before);
+});
 test('merge ok (merge and squash)', () => {
   for (const strategy of ['merge', 'squash']) {
     const c = cfg(); const r = repo();
@@ -74,6 +94,35 @@ test('merge ok (merge and squash)', () => {
     assert.ok(fs.existsSync(path.join(r, 'new.txt')));
     assert.equal(git(r, 'status', '--porcelain'), '');
   }
+});
+test('isMerged detects a branch merged manually into HEAD', () => {
+  const r = repo();
+  git(r, 'checkout', '-qb', 'colmena/manual');
+  fs.writeFileSync(path.join(r, 'manual.txt'), 'merged\n');
+  git(r, 'add', '-A'); git(r, 'commit', '-qm', 'manual branch');
+  git(r, 'checkout', '-q', 'main');
+  git(r, 'merge', '--no-ff', '-qm', 'manual merge', 'colmena/manual');
+
+  assert.equal(iso.isMerged(r, 'colmena/manual'), true);
+});
+test('isMerged rejects a branch that still points to its original base', () => {
+  const r = repo();
+  const base = git(r, 'rev-parse', 'HEAD');
+  git(r, 'branch', 'colmena/empty', base);
+
+  assert.equal(iso.isMerged(r, 'colmena/empty', base), false);
+});
+test('isMerged returns false for unmerged or missing branches and a cwd outside git', () => {
+  const r = repo();
+  git(r, 'checkout', '-qb', 'colmena/pending');
+  fs.writeFileSync(path.join(r, 'pending.txt'), 'pending\n');
+  git(r, 'add', '-A'); git(r, 'commit', '-qm', 'pending branch');
+  git(r, 'checkout', '-q', 'main');
+  const base = git(r, 'rev-parse', 'HEAD');
+
+  assert.equal(iso.isMerged(r, 'colmena/pending'), false);
+  assert.equal(iso.isMerged(r, 'colmena/deleted', base), false);
+  assert.equal(iso.isMerged(tmp('luna-not-repo-'), 'colmena/pending', base), false);
 });
 test('merge refused when target dirty', () => {
   const c = cfg(); const r = repo();
@@ -103,4 +152,48 @@ test('cleanup removes only luna worktrees and branches', () => {
   assert.ok(!fs.existsSync(p.workdir));
   const branches = git(r, 'branch', '--list');
   assert.ok(!branches.includes('colmena/cl1')); assert.ok(branches.includes('keepme'));
+});
+test('cleanup ignores a junction to an external repo and keeps its branch and files', () => {
+  const c = cfg(); const ext = repo('ext');
+  const extWt = path.join(tmp('luna-ext-'), 'extwt');
+  git(ext, 'worktree', 'add', '-q', '-b', 'colmena/external', extWt);
+  fs.writeFileSync(path.join(extWt, 'work.txt'), 'w\n');
+  git(extWt, 'add', '-A'); git(extWt, 'commit', '-qm', 'external work');
+  fs.mkdirSync(c.worktreesDir, { recursive: true });
+  const link = path.join(c.worktreesDir, 'external-ext');
+  fs.symlinkSync(extWt, link, 'junction');
+
+  const res = iso.cleanup(c, { id: 'ext' });
+
+  assert.match(git(ext, 'branch', '--list', 'colmena/external'), /colmena\/external/);
+  assert.match(git(ext, 'worktree', 'list', '--porcelain'), /extwt/);
+  assert.equal(fs.readFileSync(path.join(extWt, 'work.txt'), 'utf8').trim(), 'w');
+  assert.deepEqual(res.removed, []);
+});
+test('cleanup ignores a checkout whose git common dir points to an external repo', () => {
+  const c = cfg(); const ext = repo('ext');
+  git(ext, 'checkout', '-qb', 'colmena/external');
+  fs.mkdirSync(c.worktreesDir, { recursive: true });
+  const wt = path.join(c.worktreesDir, 'external-ext');
+  fs.mkdirSync(wt);
+  fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${path.join(ext, '.git')}\n`);
+  fs.writeFileSync(path.join(wt, 'keep.txt'), 'keep\n');
+
+  const res = iso.cleanup(c, { id: 'ext' });
+
+  assert.ok(fs.existsSync(path.join(wt, 'keep.txt')));
+  assert.equal(git(ext, 'rev-parse', '--abbrev-ref', 'HEAD'), 'colmena/external');
+  assert.deepEqual(res.removed, []);
+});
+test('cleanup tolerates broken junctions and vanished paths', () => {
+  const c = cfg();
+  const gone = tmp('luna-gone-');
+  fs.mkdirSync(c.worktreesDir, { recursive: true });
+  const link = path.join(c.worktreesDir, 'ghost-gh');
+  fs.symlinkSync(gone, link, 'junction');
+  fs.rmSync(gone, { recursive: true, force: true });
+
+  const res = iso.cleanup(c, { id: 'gh', olderThanDays: 0 });
+
+  assert.deepEqual(res.removed, []);
 });

@@ -40,8 +40,9 @@ export function getConfig(env = process.env) {
   const e = name => env[`COLMENA_${name}`] ?? env[`LUNA_${name}`];
   const home = e('HOME') || path.join(os.homedir(), '.colmena');
   const settings = loadSettings(home, env);
-  return {
+  const config = {
     home,
+    settingsPath: env.COLMENA_CONFIG || path.join(home, 'colmena.yml'),
     jobsDir: path.join(home, 'jobs'),
     worktreesDir: path.join(home, 'worktrees'),
     reportsDir: path.join(home, 'reports'),
@@ -51,8 +52,23 @@ export function getConfig(env = process.env) {
     settings,
     maxParallel: Number(e('MAX_PARALLEL')) || settings.defaults.max_parallel,
     timeoutMin: Number(e('JOB_TIMEOUT_MIN')) || settings.defaults.timeout_min,
+    exitGraceS: Number(e('EXIT_GRACE_S')) || settings.defaults.exit_grace_s,
+    // 0 is a valid value (retries disabled), so don't use `||` here.
+    retryTransient: e('RETRY_TRANSIENT') == null ? settings.defaults.retry_transient : Number(e('RETRY_TRANSIENT')),
+    waitMaxS: Math.min(Math.max(Math.floor(Number(e('WAIT_MAX_S')) || settings.defaults.wait_max_s), 1), 1800),
     codex: resolveCmd(e('CODEX_BIN') || newestCodex()),
     opencode: resolveCmd(e('OPENCODE_BIN') || findOpencode()),
     notifier: e('NOTIFIER') || 'toast',
   };
+  config.reloadSettings = () => {
+    const next = loadSettings(home, env);
+    config.settings = next;
+    config.maxParallel = Number(e('MAX_PARALLEL')) || next.defaults.max_parallel;
+    config.timeoutMin = Number(e('JOB_TIMEOUT_MIN')) || next.defaults.timeout_min;
+    config.exitGraceS = Number(e('EXIT_GRACE_S')) || next.defaults.exit_grace_s;
+    config.retryTransient = e('RETRY_TRANSIENT') == null ? next.defaults.retry_transient : Number(e('RETRY_TRANSIENT'));
+    config.waitMaxS = Math.min(Math.max(Math.floor(Number(e('WAIT_MAX_S')) || next.defaults.wait_max_s), 1), 1800);
+    return next;
+  };
+  return config;
 }

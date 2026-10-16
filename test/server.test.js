@@ -7,11 +7,25 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { getConfig } from '../src/config.js';
+import * as iso from '../src/isolation.js';
+import { buildServer } from '../src/tools.js';
 
 import { baseEnv, codexOnlyHome } from './helpers.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
+function repo() {
+  const cwd = tmp('colmena-restart-repo-');
+  git(cwd, 'init', '-q', '-b', 'main');
+  git(cwd, 'config', 'user.email', 't@t');
+  git(cwd, 'config', 'user.name', 't');
+  fs.writeFileSync(path.join(cwd, 'initial.txt'), 'initial\n');
+  git(cwd, 'add', '-A');
+  git(cwd, 'commit', '-qm', 'initial');
+  return cwd;
+}
 
 async function connect(extraEnv = {}) {
   const transport = new StdioClientTransport({
@@ -28,7 +42,25 @@ async function connect(extraEnv = {}) {
   return { client, call };
 }
 
-const NAMES = ['workers', 'report', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'cancel', 'merge', 'cleanup'];
+const NAMES = ['workers', 'preferences', 'report', 'present', 'reload_config', 'stats', 'improve', 'widget', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'verdict', 'cancel', 'merge', 'cleanup'];
+
+function providerHome({ codexEnabled = true } = {}) {
+  const home = tmp('colmena-pref-');
+  const file = path.join(home, 'colmena.yml');
+  fs.writeFileSync(file, `
+# comentario que debe conservarse
+preferences:
+  # preferencia del usuario
+  provider: auto
+workers:
+  luna: {provider: codex, model: gpt-6-luna, priority: 1, strengths: [code], enabled: ${codexEnabled}}
+  flash: {provider: opencode, model: opencode-go/deepseek-v4.1-flash, priority: 2, strengths: [code, docs]}
+roles: {reporter: luna, summarizer: luna, reviewer: luna}
+defaults: {worker: luna}
+plugins: {notify: {enabled: false}}
+`);
+  return { home, file };
+}
 
 test('workers + report tools end to end', async () => {
   const { client, call } = await connect();
@@ -37,11 +69,92 @@ test('workers + report tools end to end', async () => {
     assert.deepEqual(rows.map(r => r.alias).sort(), ['alt', 'luna-max']);
     assert.equal(rows.find(r => r.alias === 'luna-max').available, true);
     const r1 = await call('run', { task: 'hola', cwd: tmp('colmena-c-'), wait: true, kind: 'code' });
+    const deck = await call('present', { job_ids: [r1.id], title: 'Hito E2E', notes: 'Objetivo: terminar la función.' });
+    assert.equal(deck.usedFallback, false);
+    assert.match(deck.path, /-hito-e2e-deck[\\/]/);
+    assert.ok(fs.existsSync(deck.path));
     const rep = await call('report', { job_ids: [r1.id], title: 'Ronda E2E' });
     assert.equal(rep.usedFallback, false);
     assert.ok(fs.existsSync(rep.path));
+    assert.ok(rep.next.some(item => /present/.test(item)));
     assert.match((await call('report', { job_ids: [r1.id], style: 'nope' })).error, /estilo 'nope'/);
   } finally { await client.close(); }
+});
+
+test('plugins.present.enabled false oculta la tool MCP', async () => {
+  const home = codexOnlyHome();
+  const file = path.join(home, 'colmena.yml');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('  notify: {enabled: false}', '  notify: {enabled: false}\n  present: {enabled: false}'));
+  const { client } = await connect({ COLMENA_HOME: home });
+  try {
+    assert.equal((await client.listTools()).tools.some(item => item.name === 'present'), false);
+  } finally { await client.close(); }
+});
+
+test('widget MCP solo publica action y plugins.widget.enabled la oculta', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    const widget = (await client.listTools()).tools.find(item => item.name === 'widget');
+    assert.deepEqual(Object.keys(widget.inputSchema.properties), ['action']);
+    assert.equal((await call('widget', { action: 'status' })).state, 'stopped');
+    assert.match((await call('widget', { action: 'restart' })).error, /action/i);
+  } finally { await client.close(); }
+
+  const configPath = path.join(home, 'colmena.yml');
+  fs.writeFileSync(configPath, fs.readFileSync(configPath, 'utf8').replace('  notify: {enabled: false}', '  notify: {enabled: false}\n  widget: {enabled: false}'));
+  const disabled = await connect({ COLMENA_HOME: home });
+  try {
+    assert.equal((await disabled.client.listTools()).tools.some(item => item.name === 'widget'), false);
+  } finally { await disabled.client.close(); }
+});
+
+test('widget MCP despacha start, status y stop con el controlador inyectado', async () => {
+  const home = codexOnlyHome();
+  const executable = path.join(home, 'widget.exe');
+  fs.writeFileSync(executable, 'fake executable');
+  const registry = path.join(home, 'widget-process.json');
+  const processState = { alive: false };
+  const spawnCalls = [];
+  const config = getConfig(baseEnv(home));
+  const { server } = buildServer(config, {
+    widgetDependencies: {
+      executable,
+      handshakeTimeoutMs: 100,
+      pollIntervalMs: 2,
+      spawn: (command, args, options) => {
+        spawnCalls.push({ command, args, options });
+        processState.alive = true;
+        fs.writeFileSync(registry, JSON.stringify({ pid: 4812, executable }));
+        return { pid: 4812, unref() {} };
+      },
+      processControl: {
+        isAlive: async () => processState.alive,
+        executablePath: async () => processState.alive ? executable : undefined,
+        close: async () => { processState.alive = false; },
+      },
+    },
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'widget-test', version: '0' });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const call = async action => {
+    const result = await client.callTool({ name: 'widget', arguments: { action } });
+    return JSON.parse(result.content[0].text);
+  };
+  try {
+    const started = await call('start');
+    assert.equal(started.state, 'running');
+    assert.equal(started.pid, 4812);
+    assert.equal((await call('status')).pid, 4812);
+    assert.equal((await call('stop')).state, 'stopped');
+    assert.equal(spawnCalls.length, 1);
+    assert.equal(fs.existsSync(registry), false);
+  } finally {
+    await client.close();
+    await server.close();
+  }
 });
 
 test('lists all tools; no model/effort knobs', async () => {
@@ -55,6 +168,137 @@ test('lists all tools; no model/effort knobs', async () => {
     }
   } finally { await client.close(); }
 });
+test('a running MCP job survives client close and finishes after server restart', async () => {
+  const home = codexOnlyHome();
+  const first = await connect({ COLMENA_HOME: home, FAKE_DELAY: '900' });
+  const started = await first.call('run', { task: 'EDIT tras reinicio', cwd: repo(), isolation: 'worktree' });
+  assert.equal(started.state, 'running');
+  await first.client.close();
+
+  const second = await connect({ COLMENA_HOME: home, FAKE_DELAY: '900' });
+  try {
+    const waited = await second.call('wait', { job_ids: [started.job_id], timeout_s: 10 });
+    assert.equal(waited.done[0].state, 'done');
+    const result = await second.call('result', { job_id: started.job_id });
+    assert.match(result.report.RESULT, /^ok/);
+    assert.deepEqual(result.files, ['edited.txt']);
+  } finally { await second.client.close(); }
+});
+test('reload_config can restore cancellation on server shutdown', async () => {
+  const home = codexOnlyHome();
+  const file = path.join(home, 'colmena.yml');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(
+    'defaults: {worker: luna-max}',
+    'defaults: {worker: luna-max, max_parallel: 1}',
+  ));
+  const first = await connect({ COLMENA_HOME: home });
+  const started = await first.call('run_many', { tasks: [
+    { task: 'SLEEP hasta cerrar el servidor', cwd: tmp('colmena-shutdown-'), isolation: 'inplace' },
+    { task: 'EDIT estaba en cola', cwd: tmp('colmena-queued-shutdown-'), isolation: 'inplace' },
+  ] });
+  const ids = started.map(job => job.job_id);
+  const beforeClose = await first.call('list', {});
+  assert.equal(beforeClose.find(job => job.id === ids[0]).state, 'running');
+  assert.equal(beforeClose.find(job => job.id === ids[1]).state, 'queued');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(
+    'defaults: {worker: luna-max, max_parallel: 1}',
+    'defaults: {worker: luna-max, max_parallel: 1, cancel_jobs_on_shutdown: true}',
+  ));
+  const diff = await first.call('reload_config', {});
+  assert.ok(diff.defaults.includes('cancel_jobs_on_shutdown'));
+  await first.client.close();
+
+  const second = await connect({ COLMENA_HOME: home });
+  try {
+    const results = await Promise.all(ids.map(job_id => second.call('result', { job_id })));
+    assert.deepEqual(results.map(result => result.state), ['cancelled', 'cancelled']);
+    assert.equal(fs.existsSync(path.join(home, 'jobs', ids[1], 'prompt.txt')), false);
+  } finally { await second.client.close(); }
+});
+
+test('stats MCP tool applies since_days to persisted jobs', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    const oldRun = await call('run', { task: 'hola viejo', cwd: tmp('luna-stats-old-'), wait: true });
+    const recentRun = await call('run', { task: 'hola reciente', cwd: tmp('luna-stats-new-'), wait: true });
+    assert.equal(oldRun.state, 'done');
+    assert.equal(recentRun.state, 'done');
+
+    const oldMetaPath = path.join(home, 'jobs', oldRun.id, 'meta.json');
+    const oldMeta = JSON.parse(fs.readFileSync(oldMetaPath, 'utf8'));
+    oldMeta.createdAt = Date.now() - 2 * 24 * 60 * 60 * 1000;
+    fs.writeFileSync(oldMetaPath, JSON.stringify(oldMeta));
+
+    const stats = await call('stats', { since_days: 1 });
+    assert.equal(stats.totals.jobs, 1);
+    assert.equal(stats.totals.done, 1);
+    assert.equal(stats.byWorker['luna-max'].runs, 1);
+    assert.equal(stats.byWorker['luna-max'].done, 1);
+    assert.equal(stats.byKind.run.runs, 1);
+    assert.equal(typeof stats.range.since, 'string');
+    assert.equal(typeof stats.range.until, 'string');
+  } finally { await client.close(); }
+});
+
+test('MC-6: verdict registra la aceptación solo con id válido y stats la separa del estado de ejecución', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    const job = await call('run', { task: 'hola', cwd: tmp('luna-mc6-'), wait: true });
+    assert.equal(job.state, 'done');
+    const metaPath = path.join(home, 'jobs', job.id, 'meta.json');
+    assert.equal(JSON.parse(fs.readFileSync(metaPath, 'utf8')).verdict, undefined);
+
+    assert.match((await call('verdict', { job_id: 'nope', verdict: 'accepted' })).error, /no existe/);
+    assert.match((await call('verdict', { job_id: job.id, verdict: 'aprobado' })).error, /accepted|needs_work/i);
+
+    const saved = await call('verdict', { job_id: job.id, verdict: 'accepted', note: 'revisado con diff' });
+    assert.equal(saved.job_id, job.id);
+    assert.equal(saved.verdict, 'accepted');
+    assert.equal(saved.note, 'revisado con diff');
+    assert.equal(typeof saved.at, 'number');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    assert.equal(meta.verdict, 'accepted');
+    assert.equal(meta.verdictNote, 'revisado con diff');
+    assert.equal(typeof meta.verdictAt, 'number');
+
+    await call('reload_config', {});
+    const worker = (await call('stats', { since_days: 1 })).byWorker['luna-max'];
+    assert.equal(worker.done, 1);
+    assert.equal(worker.successRate, 1);
+    assert.equal(worker.reviewed, 1);
+    assert.equal(worker.accepted, 1);
+    assert.equal(worker.needsWork, 0);
+    assert.equal(worker.reviewCoverage, 1);
+    assert.equal(worker.acceptanceRate, 1);
+  } finally { await client.close(); }
+});
+
+test('MC-6: needs_work persiste tras reiniciar y los jobs sin veredicto no cuentan como rechazados', async () => {
+  const home = codexOnlyHome();
+  const first = await connect({ COLMENA_HOME: home });
+  const job = await first.call('run', { task: 'hola', cwd: tmp('luna-mc6-restart-'), wait: true });
+  const pending = await first.call('run', { task: 'hola segundo', cwd: tmp('luna-mc6-restart2-'), wait: true });
+  assert.equal((await first.call('verdict', { job_id: job.id, verdict: 'needs_work', note: 'falta prueba' })).verdict, 'needs_work');
+  assert.equal((await first.call('verdict', { job_id: pending.id, verdict: 'accepted' })).verdict, 'accepted');
+  await first.client.close();
+
+  const second = await connect({ COLMENA_HOME: home });
+  try {
+    const rerun = await second.call('run', { task: 'hola tercero', cwd: tmp('luna-mc6-restart3-'), wait: true });
+    const worker = (await second.call('stats', { since_days: 1 })).byWorker['luna-max'];
+    assert.equal(worker.runs, 3);
+    assert.equal(worker.done, 3);
+    assert.equal(worker.successRate, 1);
+    assert.equal(worker.reviewed, 2);
+    assert.equal(worker.accepted, 1);
+    assert.equal(worker.needsWork, 1);
+    assert.equal(worker.reviewCoverage, 2 / 3);
+    assert.equal(worker.acceptanceRate, 0.5);
+    assert.equal((await second.call('result', { job_id: rerun.id })).state, 'done');
+  } finally { await second.client.close(); }
+});
 
 test('run wait:true returns report; extra "model" arg cannot change the model', async () => {
   const log = path.join(tmp('luna-sl-'), 'f.log');
@@ -66,6 +310,184 @@ test('run wait:true returns report; extra "model" arg cannot change the model', 
     const argv = JSON.parse(fs.readFileSync(log, 'utf8').trim().split('\n')[0]).argv;
     assert.equal(argv[argv.indexOf('-m') + 1], 'gpt-6-luna');
     assert.ok(argv.includes('model_reasoning_effort="max"'));
+  } finally { await client.close(); }
+});
+
+test('reload_config updates workers, reports a compact diff, and preserves settings on invalid YAML', async () => {
+  const home = codexOnlyHome(); const log = path.join(tmp('luna-rl-'), 'f.log');
+  const file = path.join(home, 'colmena.yml');
+  const original = fs.readFileSync(file, 'utf8');
+  const { client, call } = await connect({ COLMENA_HOME: home, COLMENA_CONFIG: file, FAKE_LOG: log, COLMENA_MAX_PARALLEL: '2' });
+  try {
+    fs.writeFileSync(file, original.replace('model: gpt-6-luna', 'model: gpt-luna-reloaded, budget: {monthly_usd: 3}, free: true')
+      .replace('  alt: {provider: codex, model: gpt-alt, effort: high, priority: 2}', '  new: {provider: codex, model: gpt-new, priority: 2}')
+      .replace('roles: {reporter: luna-max, summarizer: luna-max, reviewer: luna-max}', 'roles: {reporter: luna-max, summarizer: luna-max, reviewer: new}')
+      .replace('defaults: {worker: luna-max}', 'defaults: {worker: new, max_parallel: 8, exit_grace_s: 25}')
+      .replace('plugins:\n  notify: {enabled: false}', 'plugins:\n  notify: {enabled: false}\n  improve: {hints: false}\n  report: {enabled: false}')
+      + '\nproviders: {opencode: {isolate_config: false}}\n');
+    const diff = await call('reload_config', {});
+    assert.deepEqual(diff, {
+      added: ['new'], removed: ['alt'], changed: [{ alias: 'luna-max', fields: ['budget.monthly_usd', 'free', 'model'] }],
+      roles: ['presenter', 'reviewer'], defaults: ['exit_grace_s', 'max_parallel', 'worker'], providers: ['opencode.isolate_config'],
+      plugins: ['improve.hints', 'report.enabled'], preferences: [],
+    });
+    assert.equal((await client.listTools()).tools.some(tool => tool.name === 'report'), false);
+    const run = await call('run', { task: 'modelo renovado', worker: 'luna-max', cwd: tmp('luna-reload-c-'), wait: true });
+    assert.equal(run.state, 'done');
+    assert.equal((await call('workers', {})).find(worker => worker.alias === 'luna-max').free, true);
+    const invocation = JSON.parse(fs.readFileSync(log, 'utf8').trim().split('\n')[0]);
+    assert.equal(invocation.argv[invocation.argv.indexOf('-m') + 1], 'gpt-luna-reloaded');
+
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('report: {enabled: false}', 'report: {enabled: true}'));
+    await call('reload_config', {});
+    assert.equal((await client.listTools()).tools.some(tool => tool.name === 'report'), true);
+
+    fs.writeFileSync(file, 'standards: {enabled: maybe}\n');
+    const invalid = await call('reload_config', {});
+    assert.match(invalid.error, /standards\.enabled/);
+    const workers = await call('workers', {});
+    assert.equal(workers.find(w => w.alias === 'luna-max').model, 'gpt-luna-reloaded');
+    assert.equal(workers.some(w => w.alias === 'new'), true);
+  } finally { await client.close(); }
+});
+
+test('preferences gets current routing, changes the next run, persists comments, and validates input', async () => {
+  const { home, file } = providerHome();
+  const log = path.join(tmp('colmena-pref-log-'), 'agents.log');
+  const { client, call } = await connect({
+    COLMENA_HOME: home, COLMENA_CONFIG: file, COLMENA_CODEX_BIN: path.join(here, 'fake-codex.js'),
+    COLMENA_OPENCODE_BIN: path.join(here, 'fake-opencode.js'), FAKE_LOG: log,
+  });
+  try {
+    assert.deepEqual(await call('preferences', {}), { provider: 'auto', worker: 'luna', would_choose: 'luna' });
+    const selected = await call('preferences', { provider: 'opencode' });
+    assert.deepEqual(selected, { provider: 'opencode', worker: 'flash', would_choose: 'flash' });
+    const rows = await call('workers', {});
+    assert.equal(rows.find(row => row.alias === 'flash').preferred, true);
+    assert.equal(rows.find(row => row.alias === 'luna').preferred, false);
+
+    const cwd = tmp('colmena-pref-cwd-');
+    const run = await call('run', { task: 'usar preferencia en caliente', cwd, wait: true });
+    assert.equal(run.state, 'done');
+    assert.equal(run.worker, 'flash');
+    const invocation = JSON.parse(fs.readFileSync(log, 'utf8').trim().split('\n').at(-1));
+    assert.equal(invocation.argv[0], 'run');
+    assert.equal(invocation.argv[invocation.argv.indexOf('-m') + 1], 'opencode-go/deepseek-v4.1-flash');
+    assert.equal(invocation.dir, cwd);
+
+    const saved = fs.readFileSync(file, 'utf8');
+    assert.match(saved, /# comentario que debe conservarse/);
+    assert.match(saved, /# preferencia del usuario/);
+    assert.match(saved, /provider: opencode/);
+    assert.match(saved, /model: gpt-6-luna/);
+    assert.deepEqual(fs.readdirSync(home).filter(name => name.includes('.tmp')), []);
+
+    const beforeInvalid = fs.readFileSync(file, 'utf8');
+    const invalid = await call('preferences', { provider: 'other' });
+    assert.match(invalid.error, /provider|opencode|codex|auto/i);
+    assert.equal(fs.readFileSync(file, 'utf8'), beforeInvalid);
+    assert.deepEqual(fs.readdirSync(home).filter(name => name.includes('.tmp')), []);
+  } finally { await client.close(); }
+});
+
+test('preferences creates the effective config file when absent', async () => {
+  const home = tmp('colmena-pref-missing-');
+  const file = path.join(home, 'nested', 'colmena.yml');
+  const { client, call } = await connect({ COLMENA_HOME: home, COLMENA_CONFIG: file });
+  try {
+    assert.deepEqual(await call('preferences', { provider: 'opencode' }), { provider: 'opencode', worker: 'ds-flash', would_choose: 'ds-flash' });
+    assert.match(fs.readFileSync(file, 'utf8'), /preferences:\s+provider: opencode/);
+    assert.deepEqual(fs.readdirSync(path.dirname(file)).filter(name => name.includes('.tmp')), []);
+  } finally { await client.close(); }
+});
+
+for (const [label, original] of [['vacío', ''], ['solo comentarios', '# comentario conservado\n# otra nota\n']]) {
+  test(`preferences añade su clave a un archivo ${label}`, async () => {
+    const { home, file } = providerHome();
+    const { client, call } = await connect({ COLMENA_HOME: home, COLMENA_CONFIG: file });
+    try {
+      fs.writeFileSync(file, original);
+      const result = await call('preferences', { provider: 'opencode' });
+      assert.equal(result.provider, 'opencode');
+      assert.equal(result.would_choose, 'flash');
+      const saved = fs.readFileSync(file, 'utf8');
+      assert.match(saved, /preferences:\s+provider: opencode/);
+      if (original) assert.match(saved, /# comentario conservado/);
+    } finally { await client.close(); }
+  });
+}
+
+test('preferences guarda el cambio aunque no haya workers y devuelve would_choose nulo', async () => {
+  const { home, file } = providerHome({ codexEnabled: false });
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('strengths: [code, docs]}', 'strengths: [code, docs], enabled: false}'));
+  const { client, call } = await connect({ COLMENA_HOME: home, COLMENA_CONFIG: file });
+  try {
+    const result = await call('preferences', { provider: 'codex' });
+    assert.equal(result.provider, 'codex');
+    assert.equal(result.worker, null);
+    assert.equal(result.would_choose, null);
+    assert.match(result.note, /preferencia guardada.*router no pudo calcular.*ningún worker disponible/i);
+    assert.match(fs.readFileSync(file, 'utf8'), /provider: codex/);
+    const workers = await call('workers', {});
+    assert.equal(workers.every(worker => !worker.available), true);
+    assert.equal(workers.filter(worker => worker.provider === 'codex').every(worker => worker.preferred), true);
+  } finally { await client.close(); }
+});
+
+test('preferences conserva archivo y memoria si falla el rename', async () => {
+  const { home, file } = providerHome();
+  const original = fs.readFileSync(file, 'utf8');
+  const config = getConfig({
+    ...process.env,
+    COLMENA_HOME: home,
+    COLMENA_CONFIG: file,
+    COLMENA_CODEX_BIN: path.join(here, 'fake-codex.js'),
+    COLMENA_OPENCODE_BIN: path.join(here, 'fake-opencode.js'),
+    COLMENA_NOTIFIER: 'none',
+  });
+  const { server } = buildServer(config, {
+    atomicWriteDependencies: { renameSync: () => { throw new Error('rename failure for test'); } },
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'injected-test', version: '0' });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const call = async (name, args) => {
+    const r = await client.callTool({ name, arguments: args });
+    const text = r.content[0].text;
+    return r.isError ? { error: text } : JSON.parse(text);
+  };
+  try {
+    const failed = await call('preferences', { provider: 'opencode' });
+    assert.match(failed.error, /rename failure for test/);
+    assert.equal(fs.readFileSync(file, 'utf8'), original);
+    assert.equal((await call('workers', {})).every(worker => !worker.preferred), true);
+    assert.deepEqual(fs.readdirSync(home).filter(name => name.endsWith('.tmp')), []);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test('preferences falls back across providers with a note, and reload_config reads manual edits', async () => {
+  const { home, file } = providerHome({ codexEnabled: false });
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('provider: auto', 'provider: codex'));
+  const { client, call } = await connect({
+    COLMENA_HOME: home, COLMENA_CONFIG: file, COLMENA_CODEX_BIN: path.join(here, 'fake-codex.js'),
+    COLMENA_OPENCODE_BIN: path.join(here, 'fake-opencode.js'),
+  });
+  try {
+    assert.deepEqual(await call('preferences', {}), {
+      provider: 'codex', worker: 'flash', would_choose: 'flash', note: 'sin workers disponibles de codex; se usó flash',
+    });
+    const fallback = await call('run', { task: 'usar fallback', cwd: tmp('colmena-pref-fallback-'), wait: true });
+    assert.equal(fallback.worker, 'flash');
+    assert.equal(fallback.note, 'sin workers disponibles de codex; se usó flash');
+
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('provider: codex', 'provider: opencode'));
+    const diff = await call('reload_config', {});
+    assert.deepEqual(diff.preferences, ['provider']);
+    assert.deepEqual(await call('preferences', {}), { provider: 'opencode', worker: 'flash', would_choose: 'flash' });
   } finally { await client.close(); }
 });
 
@@ -107,6 +529,64 @@ test('cleanup refuses to discard unmerged work unless force', async () => {
   } finally { await client.close(); }
 });
 
+test('cleanup accepts a job branch merged manually without force', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    const repo = tmp('luna-manual-merge-'); git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n'); git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'i');
+    const job = await call('run', { task: 'EDIT manual', cwd: repo, wait: true });
+    const metaPath = path.join(home, 'jobs', job.id, 'meta.json');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    assert.equal(job.state, 'done');
+    assert.equal(meta.merged, undefined);
+
+    git(meta.workdir, 'add', '-A');
+    git(meta.workdir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'manual worker commit');
+    git(repo, 'merge', '--no-ff', '-m', 'manual merge', meta.branch);
+
+    const cleaned = await call('cleanup', { job_id: job.id });
+    assert.ok(!cleaned.error, cleaned.error);
+    assert.equal(cleaned.removed.length, 1);
+  } finally { await client.close(); }
+});
+
+test('cleanup accepts a squash completed through the merge tool', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    const repo = tmp('luna-squash-cleanup-'); git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n'); git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'i');
+    const job = await call('run', { task: 'EDIT squash', cwd: repo, wait: true });
+    const merged = await call('merge', { job_id: job.id, strategy: 'squash' });
+    assert.equal(merged.ok, true);
+    const meta = JSON.parse(fs.readFileSync(path.join(home, 'jobs', job.id, 'meta.json'), 'utf8'));
+    assert.equal(meta.merged, true);
+    assert.equal(iso.isMerged(repo, meta.branch), false);
+
+    const cleaned = await call('cleanup', { job_id: job.id });
+    assert.equal(cleaned.removed.length, 1);
+  } finally { await client.close(); }
+});
+
+test('MC-3: wait valida timeout_s entre 1 y 1800 sin cancelar al vencer', async () => {
+  const { client, call } = await connect({ COLMENA_WAIT_MAX_S: '1800' });
+  try {
+    assert.match((await call('wait', { job_ids: ['nope'], timeout_s: 0 })).error, /timeout_s|1|1800/i);
+    assert.match((await call('wait', { job_ids: ['nope'], timeout_s: 5000 })).error, /timeout_s|1|1800/i);
+    const fast = await call('run', { task: 'hola', cwd: tmp('luna-mc3-'), wait: true, timeout_s: 1200 });
+    assert.equal(fast.state, 'done');
+    const slow = await call('run', { task: 'SLEEP', cwd: tmp('luna-mc3-slow-') });
+    const w = await call('wait', { job_ids: [slow.job_id], timeout_s: 1 });
+    assert.equal(w.pending.length, 1);
+    assert.equal(typeof w.pending[0].elapsedS, 'number');
+    assert.ok(['queued', 'running'].includes(w.pending[0].state));
+    assert.equal((await call('status', { job_id: slow.job_id })).state, w.pending[0].state);
+    await call('cancel', { job_id: slow.job_id });
+  } finally { await client.close(); }
+});
 test('errors are returned as tool errors, not crashes', async () => {
   const { client, call } = await connect();
   try {

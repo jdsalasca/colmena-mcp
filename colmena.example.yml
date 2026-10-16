@@ -2,6 +2,12 @@
 # Si defines `workers`, REEMPLAZAN a los de por defecto; el resto de secciones se mezclan con los defaults.
 # Los modelos viven AQUÍ y solo aquí: las herramientas únicamente aceptan estos alias, así nada se lanza con un modelo caro por accidente.
 # Cambia el archivo y llama a la tool `reload_config`: no hace falta reiniciar.
+# `standards` añade instrucciones de calidad a los jobs `run`; los helpers no reciben ese preámbulo.
+# Si omites `preamble`, se usa el estándar español integrado (TDD, DRY, reutilización, evidencia y reporte).
+# `providers.opencode.isolate_config` separa OpenCode de los MCP, plugins y agentes globales del usuario.
+
+preferences:
+  provider: auto                # codex | opencode; cámbialo en caliente si quieres priorizar otro proveedor
 
 workers:
   luna-max:
@@ -12,29 +18,46 @@ workers:
     strengths: [code, refactor, tests]
     # price_per_mtok: {input: 1.0, output: 8.0}   # USD por millón de tokens; Codex no informa costo, así se estima
     # budget: {monthly_usd: 20}                   # al llegar al tope el worker queda "sin presupuesto"
+    # free: true                                  # solo si tu plan garantiza $0; conserva nominal y omite bloqueo por presupuesto
     # enabled: true
-  luna-go:                     # el mismo GPT-6 Luna vía OpenCode Go: $0.10 entrada / $0.50 salida por Mtok
-    provider: opencode
-    model: opencode-go/gpt-6-luna
+  ds-flash:                    # insignia de OpenCode Go: DeepSeek V4.1 Flash ($0.15 entrada / $0.60 salida por Mtok)
+    provider: opencode         # en OpenCode NO se usa Luna: Luna va por Codex
+    model: opencode-go/deepseek-v4.1-flash
     effort: max
     priority: 2
     strengths: [code, docs, summary, report]
     budget: {monthly_usd: 10}
+    # reserve_usd: 0.5           # estimado que cada job reserva de este saldo al encolar; se libera al terminar/cancelar
+  max-hive:                    # ver README "max-hive": trabajo masivo en paralelo a costo ~0
+    provider: opencode
+    model: opencode-go/muse-spark-1.3-contributor   # modelo "contributor" del plan Go (sin zero data retention)
+    effort: high               # este modelo no ofrece `max` (variants: minimal/low/medium/high/xhigh)
+    priority: 9                # último: solo se elige a propósito (kind: bulk) o si no queda nada más
+    strengths: [bulk]
+    budget: {monthly_usd: 5}   # tope de seguridad: OpenCode reporta un costo nominal por ejecución
 
-# Otras opciones de OpenCode Go (USD por Mtok entrada/salida, revisado 2026-10-16):
-#   opencode-go/deepseek-v4.1-flash 0.15/0.60 · opencode-go/deepseek-v4-pro 0.66/1.98 · opencode-go/claude-haiku-5-5 0.10/0.50
-#   opencode-go/glm-5.3-flash 0.15/0.50 · opencode-go/cat-jam-free 0/0 (gratis, calidad sin verificar)
-# Lista completa y precios: `opencode models opencode-go --verbose`.
+# Cómo buscar otro modelo para max-hive (lo puede hacer Claude cuando lo necesites):
+#   node scripts/opencode-models.mjs --contributor           # modelos "contributor" del plan Go, del más barato al más caro
+#   node scripts/opencode-models.mjs --max-out 0.6 --json    # todo lo que cueste <= $0.60/Mtok de salida
+# Evita los "-free" (traen cuota). Prueba el candidato con una ejecución real y mira `cost_usd` en el resultado.
+# Precios revisados 2026-10-16 (USD por Mtok entrada/salida): deepseek-v4-pro 0.66/1.98 · claude-haiku-5-5 0.10/0.50 ·
+#   glm-5.3-flash 0.15/0.50 · muse-spark-1.3-contributor 0.10/0.20 · gemini-4-argon-contributor 4/20 (¡caro!).
 
 roles:                         # quién hace los trabajos auxiliares
-  reporter: luna-go            # tool report
-  summarizer: luna-go          # tools summarize / compact
+  reporter: ds-flash           # tool report
+  summarizer: ds-flash         # tools summarize / compact
   reviewer: luna-max           # tool review
+  presenter: luna-max          # tool present (Codex Luna max)
 
 defaults:
   worker: luna-max
   max_parallel: 4
   timeout_min: 60
+  exit_grace_s: 20  # tras entrega final de Codex, espera antes de matar el proceso colgado
+  retry_transient: 1  # reintenta una vez fallos del proveedor <30 s y reintentables (isRetryable / "Unexpected server error"); 0 lo desactiva
+  wait_max_s: 600   # tope de cada espera wait/run (1 a 1800 s); sube hasta 1800 para jobs largos
+  cancel_jobs_on_shutdown: false  # true cancela jobs queued/running al cerrar el servidor MCP; false los deja trabajar y la próxima instancia los adopta
+  reserve_usd: 0    # reserva global estimada por job concurrente (0 la desactiva); workers.<alias>.reserve_usd la sobreescribe
 
 plugins:
   notify:
@@ -44,3 +67,23 @@ plugins:
   report:
     enabled: true
     default_style: papercraft
+  present:
+    enabled: true
+    default_style: papercraft-deck
+  improve:
+    enabled: true      # tool `improve`, prompt MCP continuous-improvement e invitaciones
+    hints: true        # next en report / hint en wait; false los silencia sin ocultar la tool
+  widget:
+    enabled: true      # tool MCP `widget {action: start|status|stop}`
+
+standards:
+  enabled: true
+  # preamble: |-
+  #   Usa TDD (red, green, refactor), código limpio y DRY.
+  #   Reutiliza lo existente, verifica con evidencia y reporta en RESULT/FILES/TESTS/RISKS.
+
+providers:
+  opencode:
+    isolate_config: true          # defecto: $COLMENA_HOME/opencode-config; la autenticación permanece en XDG_DATA_HOME
+    # config_dir: C:/ruta/opencode-config  # carpeta para una configuración mínima propia
+    # isolate_config: false                # vuelve a usar la configuración global habitual

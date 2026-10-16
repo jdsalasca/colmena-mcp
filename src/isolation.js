@@ -1,11 +1,39 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }).trim();
+const runGit = (cwd, env, ...args) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }).trim();
+const git = (cwd, ...args) => runGit(cwd, process.env, ...args);
+const gitIndex = (cwd, index, ...args) => runGit(cwd, { ...process.env, GIT_INDEX_FILE: index }, ...args);
 const tryGit = (cwd, ...args) => { try { return { ok: true, out: git(cwd, ...args) }; } catch (e) { return { ok: false, out: `${e.stdout ?? ''}${e.stderr ?? ''}${e.message}` }; } };
 
+function withStagedIndex(workdir, fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-index-'));
+  const index = path.join(dir, 'index');
+  const real = tryGit(workdir, 'rev-parse', '--git-path', 'index');
+  if (real.ok) {
+    const src = path.resolve(workdir, real.out);
+    if (fs.existsSync(src)) fs.copyFileSync(src, index);
+  }
+  try {
+    gitIndex(workdir, index, 'add', '-A');
+    return fn(index);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 export function isGitRepo(cwd) { return tryGit(cwd, 'rev-parse', '--show-toplevel').ok; }
+
+export function isMerged(cwd, branch, base) {
+  if (!branch) return false;
+  if (base) {
+    const commits = tryGit(cwd, 'rev-list', '--count', `${base}..${branch}`);
+    if (!commits.ok || Number(commits.out) === 0) return false;
+  }
+  return tryGit(cwd, 'merge-base', '--is-ancestor', branch, 'HEAD').ok;
+}
 
 export function prepare(config, { cwd, isolation, id }) {
   if (isolation === 'inplace') return { workdir: cwd, readonly: false };
@@ -30,17 +58,19 @@ export function prepare(config, { cwd, isolation, id }) {
 export function changes(workdir, base) {
   if (!isGitRepo(workdir)) return { files: [], diffstat: '' };
   if (base) {
-    git(workdir, 'add', '-A');
-    const files = git(workdir, 'diff', base, '--name-only').split('\n').filter(Boolean);
-    return { files, diffstat: files.length ? git(workdir, 'diff', base, '--shortstat') : '' };
+    return withStagedIndex(workdir, (index) => {
+      const files = gitIndex(workdir, index, 'diff', base, '--name-only').split('\n').filter(Boolean);
+      return { files, diffstat: files.length ? gitIndex(workdir, index, 'diff', base, '--shortstat') : '' };
+    });
   }
   const files = git(workdir, 'status', '--porcelain').split('\n').filter(Boolean).map(l => l.slice(3));
   return { files, diffstat: tryGit(workdir, 'diff', '--shortstat', 'HEAD').out };
 }
 
 export function diff(workdir, base, maxChars = 20000) {
-  if (base) git(workdir, 'add', '-A');
-  const text = base ? git(workdir, 'diff', base) : git(workdir, 'diff', 'HEAD');
+  const text = base
+    ? withStagedIndex(workdir, (index) => gitIndex(workdir, index, 'diff', base))
+    : git(workdir, 'diff', 'HEAD');
   return text.length > maxChars ? { text: text.slice(0, maxChars), truncated: true } : { text, truncated: false };
 }
 
@@ -65,6 +95,20 @@ export function merge(cwd, branch, strategy = 'merge') {
   return { ok: true, message: `${branch} fusionada` };
 }
 
+// Solo es de Colmena un worktree ligado real: directorio (no enlace) cuyo git-dir
+// vive en <common>/worktrees/ y cuyo HEAD es la rama colmena/<id> del nombre.
+function ownedWorktree(wt, id) {
+  const gitDir = tryGit(wt, 'rev-parse', '--git-dir');
+  const common = tryGit(wt, 'rev-parse', '--git-common-dir');
+  const branch = tryGit(wt, 'rev-parse', '--abbrev-ref', 'HEAD');
+  if (!gitDir.ok || !common.ok || !branch.ok) return null;
+  const commonDir = path.resolve(wt, common.out);
+  if (path.basename(commonDir) !== '.git') return null;
+  if (!path.resolve(wt, gitDir.out).startsWith(path.join(commonDir, 'worktrees') + path.sep)) return null;
+  if (branch.out !== `colmena/${id}`) return null;
+  return { mainRepo: path.dirname(commonDir), branch: branch.out };
+}
+
 export function cleanup(config, { id, olderThanDays } = {}) {
   const removed = [];
   let dirs = [];
@@ -74,14 +118,14 @@ export function cleanup(config, { id, olderThanDays } = {}) {
     const wt = path.resolve(config.worktreesDir, d);
     if (!wt.startsWith(root + path.sep)) continue;
     if (id && !d.endsWith(`-${id}`)) continue;
-    if (olderThanDays != null && Date.now() - fs.statSync(wt).mtimeMs < olderThanDays * 86400000) continue;
-    const branch = tryGit(wt, 'rev-parse', '--abbrev-ref', 'HEAD').out;
-    const common = tryGit(wt, 'rev-parse', '--git-common-dir');
-    const mainRepo = common.ok ? path.dirname(path.resolve(wt, common.out)) : null;
-    if (mainRepo) {
-      tryGit(mainRepo, 'worktree', 'remove', '--force', wt);
-      if (branch.startsWith('colmena/')) tryGit(mainRepo, 'branch', '-D', branch);
-    }
+    const stat = fs.lstatSync(wt, { throwIfNoEntry: false });
+    if (!stat?.isDirectory()) continue;
+    if (olderThanDays != null && Date.now() - stat.mtimeMs < olderThanDays * 86400000) continue;
+    const dirId = d.slice(d.lastIndexOf('-') + 1);
+    const owned = ownedWorktree(wt, dirId);
+    if (!owned) continue;
+    tryGit(owned.mainRepo, 'worktree', 'remove', '--force', wt);
+    tryGit(owned.mainRepo, 'branch', '-D', owned.branch);
     if (fs.existsSync(wt)) fs.rmSync(wt, { recursive: true, force: true });
     removed.push(wt);
   }
