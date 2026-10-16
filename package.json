@@ -1,7 +1,7 @@
 {
   "name": "colmena-mcp",
-  "version": "0.1.0",
-  "description": "MCP server that lets Claude orchestrate gpt-6-luna (max) agents through Codex CLI",
+  "version": "0.2.0",
+  "description": "MCP server that lets Claude orchestrate agents through Codex CLI and OpenCode",
   "type": "module",
   "bin": {
     "colmena-mcp": "src/server.js"
