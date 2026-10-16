@@ -4,6 +4,7 @@
 # Cambia el archivo y llama a la tool `reload_config`: no hace falta reiniciar.
 # `standards` añade instrucciones de calidad a los jobs `run`; los helpers no reciben ese preámbulo.
 # Si omites `preamble`, se usa el estándar español integrado (TDD, DRY, reutilización, evidencia y reporte).
+# `providers.opencode.isolate_config` separa OpenCode de los MCP, plugins y agentes globales del usuario.
 
 workers:
   luna-max:
@@ -61,3 +62,9 @@ standards:
   # preamble: |-
   #   Usa TDD (red, green, refactor), código limpio y DRY.
   #   Reutiliza lo existente, verifica con evidencia y reporta en RESULT/FILES/TESTS/RISKS.
+
+providers:
+  opencode:
+    isolate_config: true          # defecto: $COLMENA_HOME/opencode-config; la autenticación permanece en XDG_DATA_HOME
+    # config_dir: C:/ruta/opencode-config  # carpeta para una configuración mínima propia
+    # isolate_config: false                # vuelve a usar la configuración global habitual
