@@ -158,7 +158,7 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
   if (!config.settings.plugins.improve.enabled) improveTool.disable();
 
   const improvePrompt = server.registerPrompt('continuous-improvement',
-    { title: 'Mejora continua', description: 'Ronda completa de colmena: workers → run_many → wait → review → merge → report → improve.' },
+    { title: 'Mejora continua', description: 'Ronda completa de colmena: workers → run_many → wait → review → verdict → merge → report → improve.' },
     () => ({ messages: [{ role: 'user', content: { type: 'text', text: CONTINUOUS_IMPROVEMENT_PROMPT } }] }));
   if (!config.settings.plugins.improve.enabled) improvePrompt.disable();
 
