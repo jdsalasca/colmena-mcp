@@ -7,6 +7,7 @@ export const DEFAULT_STANDARDS_PREAMBLE = `## Estándares de trabajo
 - Aplica TDD en ciclos red → green → refactor: escribe primero una prueba que falle por la razón correcta, luego el código mínimo y después refactoriza.
 - Mantén el código limpio y DRY; busca y reutiliza lo que ya existe antes de escribir helpers o lógica nuevos.
 - Verifica cada resultado con pruebas o comandos y reporta evidencia real; no afirmes éxito sin comprobarlo.
+- Tienes internet por defecto (búsqueda web en vivo / webfetch): consulta documentación y versiones actuales cuando dependas de una API o dato externo, y cita la fuente.
 - Si están disponibles, usa los skills de superpowers para TDD y verificación antes de completar.
 - Respeta el formato obligatorio de reporte RESULT/FILES/TESTS/RISKS incluido al final del brief.`;
 

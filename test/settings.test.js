@@ -31,6 +31,9 @@ test('no yml → defaults', () => {
   assert.match(s.standards.preamble, /DRY/);
   assert.match(s.standards.preamble, /evidencia/i);
   assert.deepEqual(s.providers, { opencode: { isolate_config: true } });
+  assert.match(s.standards.preamble, /internet/i);
+  assert.match(s.standards.preamble, /webfetch/i);
+  assert.match(s.standards.preamble, /fuente/i);
   assert.deepEqual(DEFAULT_SETTINGS.defaults.max_parallel, 4);
 });
 test('yml replaces workers, merges sections', () => {

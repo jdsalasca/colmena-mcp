@@ -246,6 +246,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     bus, resolveWorker, workers: () => workerStatus(config.settings, ledger),
     submit, status, result, wait, cancel, continueJob, summarize, compact, review, recoverOrphans,
     list: f => store.list(f ?? {}).map(m => status(m.id)),
+    metas: () => store.list({}),
     meta: id => need(id),
     mark: (id, patch) => store.update(id, patch),
     jobDir: store.jobDir,
