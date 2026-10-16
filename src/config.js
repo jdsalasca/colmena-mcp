@@ -55,6 +55,7 @@ export function getConfig(env = process.env) {
     exitGraceS: Number(e('EXIT_GRACE_S')) || settings.defaults.exit_grace_s,
     // 0 is a valid value (retries disabled), so don't use `||` here.
     retryTransient: e('RETRY_TRANSIENT') == null ? settings.defaults.retry_transient : Number(e('RETRY_TRANSIENT')),
+    waitMaxS: Math.min(Math.max(Math.floor(Number(e('WAIT_MAX_S')) || settings.defaults.wait_max_s), 1), 1800),
     codex: resolveCmd(e('CODEX_BIN') || newestCodex()),
     opencode: resolveCmd(e('OPENCODE_BIN') || findOpencode()),
     notifier: e('NOTIFIER') || 'toast',
@@ -66,6 +67,7 @@ export function getConfig(env = process.env) {
     config.timeoutMin = Number(e('JOB_TIMEOUT_MIN')) || next.defaults.timeout_min;
     config.exitGraceS = Number(e('EXIT_GRACE_S')) || next.defaults.exit_grace_s;
     config.retryTransient = e('RETRY_TRANSIENT') == null ? next.defaults.retry_transient : Number(e('RETRY_TRANSIENT'));
+    config.waitMaxS = Math.min(Math.max(Math.floor(Number(e('WAIT_MAX_S')) || next.defaults.wait_max_s), 1), 1800);
     return next;
   };
   return config;

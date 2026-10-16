@@ -33,6 +33,18 @@ test('env numbers', () => {
   assert.equal(c.maxParallel, 2);
   assert.equal(c.timeoutMin, 0.5);
 });
+test('MC-3: waitMaxS defaults to 600, honors YAML/env and clamps to 1800', () => {
+  const c = getConfig({ LUNA_HOME: 'X:\\h', LUNA_CODEX_BIN: 'C:\\c\\codex.exe' });
+  assert.equal(c.waitMaxS, 600);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-wait-max-'));
+  fs.writeFileSync(path.join(home, 'colmena.yml'), 'defaults: {worker: luna-max, wait_max_s: 1200}\n');
+  const y = getConfig({ COLMENA_HOME: home });
+  assert.equal(y.waitMaxS, 1200);
+  const e = getConfig({ COLMENA_HOME: home, COLMENA_WAIT_MAX_S: '2' });
+  assert.equal(e.waitMaxS, 2);
+  const big = getConfig({ COLMENA_HOME: home, COLMENA_WAIT_MAX_S: '5000' });
+  assert.equal(big.waitMaxS, 1800);
+});
 test('COLMENA_EXIT_GRACE_S overrides YAML default, including after reload', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-exit-grace-'));
   fs.writeFileSync(path.join(home, 'colmena.yml'), 'defaults: {worker: luna-max, exit_grace_s: 1}\n');

@@ -38,7 +38,7 @@ export function buildImprovePrompt(focus, { date = new Date().toISOString().slic
 export const CONTINUOUS_IMPROVEMENT_PROMPT = `Cierra una ronda de colmena y deja lista la siguiente:
 1. workers — mira qué workers están disponibles (presupuesto, fortalezas).
 2. run_many — lanza los briefs en paralelo: objetivo, archivos y criterio de aceptación.
-3. wait — espera a que terminen (máx. 600 s por llamada; vuelve a esperar si sigue pendiente).
+3. wait — espera a que terminen (máx. 600 s por defecto, hasta 1800 s si se configura wait_max_s; vuelve a esperar si sigue pendiente).
 4. result + review/diff — valida cada job con evidencia antes de fusionar nada.
 5. merge — integra lo aprobado; usa cleanup para borrar worktrees y ramas colmena/*.
 6. report — genera el HTML de cierre; su campo next te dice qué improve falta.

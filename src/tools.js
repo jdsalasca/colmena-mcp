@@ -18,6 +18,8 @@ const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
 const isolationEnum = z.enum(['worktree', 'inplace', 'readonly']).optional()
   .describe('worktree (defecto en repos git: rama colmena/<id> aislada) | inplace (edita el directorio) | readonly (solo lectura)');
 const detailEnum = z.enum(['min', 'normal', 'full']).optional().describe('min (defecto, ~300 tokens) | normal | full');
+const timeoutSShape = z.number().min(1).max(1800).optional()
+  .describe('segundos de espera (1 a 1800; se recorta al máximo configurado defaults.wait_max_s, defecto 600)');
 
 const changedFields = (before = {}, after = {}, prefix = '') => [...new Set([...Object.keys(before), ...Object.keys(after)])]
   .flatMap(key => {
@@ -171,7 +173,7 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
   });
 
   tool('run', 'Lanza un agente obrero (según proveedor preferido, disponibilidad, kind y prioridad; worker explícito siempre manda). Devuelve job_id; con wait=true espera el reporte (hasta timeout_s).',
-    { ...taskShape, wait: z.boolean().optional(), timeout_s: z.number().optional() },
+    { ...taskShape, wait: z.boolean().optional(), timeout_s: timeoutSShape },
     async a => {
       const id = jm.submit(toSpec(a));
       if (!a.wait) return { job_id: id, ...jm.status(id) };
@@ -203,8 +205,8 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
     return `todos terminaron: sin improve en las últimas 24 h para ${cwd}; considera \`improve\` (${PENDING_FOCUSES.join(', ')})`;
   };
 
-  tool('wait', 'Espera a uno o todos los jobs (máx 600 s) y devuelve reportes compactos; si la ronda terminó, añade un hint de mejora continua.',
-    { job_ids: z.array(z.string()).min(1), timeout_s: z.number().optional(), mode: z.enum(['any', 'all']).optional() },
+  tool('wait', 'Espera a uno o todos los jobs (máx configurable defaults.wait_max_s, defecto 600 s, tope 1800 s) y devuelve reportes compactos; al vencer devuelve pending con estado y progreso sin cancelar; si la ronda terminó, añade un hint de mejora continua.',
+    { job_ids: z.array(z.string()).min(1), timeout_s: timeoutSShape, mode: z.enum(['any', 'all']).optional() },
     async a => {
       const w = await jm.wait(a.job_ids, { mode: a.mode ?? 'all', timeoutS: a.timeout_s ?? 120 });
       const hint = w.pending.length ? undefined : improveHint(a.job_ids[0]);
