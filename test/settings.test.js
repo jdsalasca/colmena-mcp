@@ -67,6 +67,15 @@ test('exit_grace_s has a default and must be positive', () => {
   const { h, env } = withYml('defaults: {worker: luna-max, exit_grace_s: 0}\n');
   assert.throws(() => loadSettings(h, env), /defaults\.exit_grace_s/);
 });
+test('MC-3: wait_max_s defaults to 600 and validates within 1..1800', () => {
+  assert.equal(loadSettings(home(), {}).defaults.wait_max_s, 600);
+  const { h, env } = withYml('defaults: {worker: luna-max, wait_max_s: 1800}\n');
+  assert.equal(loadSettings(h, env).defaults.wait_max_s, 1800);
+  for (const bad of ['wait_max_s: 0', 'wait_max_s: 5000']) {
+    const t = withYml(`defaults: {worker: luna-max, ${bad}}\n`);
+    assert.throws(() => loadSettings(t.h, t.env), /defaults\.wait_max_s/);
+  }
+});
 test('yml replaces workers, merges sections', () => {
   const { h, env } = withYml(`
 workers:

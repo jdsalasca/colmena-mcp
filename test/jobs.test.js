@@ -289,3 +289,40 @@ test('job.started / job.finished events on the bus', async () => {
   const id = jm.submit(S('hola')); await jm.wait([id]);
   assert.deepEqual(seen, [['s', 'luna-max', 'codex'], ['f', 'done', 'codex']]);
 });
+test('MC-3: wait respeta el máximo configurado y el pendiente trae estado y progreso sin cancelar', async () => {
+  const { jm } = mk({ COLMENA_WAIT_MAX_S: '2' });
+  const id = jm.submit(S('SLEEP'));
+  const t0 = Date.now();
+  const w = await jm.wait([id], { timeoutS: 8 });
+  const elapsed = (Date.now() - t0) / 1000;
+  assert.equal(w.done.length, 0);
+  assert.equal(w.pending.length, 1);
+  assert.ok(elapsed < 5, `esperó ${elapsed}s, debió recortar al máximo configurado (2 s)`);
+  assert.ok(elapsed >= 1.5, `esperó ${elapsed}s, debió esperar hasta el máximo configurado`);
+  assert.equal(w.pending[0].id, id);
+  assert.ok(['queued', 'running'].includes(w.pending[0].state), `state: ${w.pending[0].state}`);
+  assert.equal(typeof w.pending[0].elapsedS, 'number');
+  assert.ok(!['done', 'failed', 'cancelled', 'orphaned'].includes(jm.status(id).state), 'el vencimiento no debe cancelar el job');
+  await jm.cancel(id); await jm.wait([id], { timeoutS: 20 });
+  assert.equal(jm.status(id).state, 'cancelled');
+});
+test('MC-3: wait admite timeout_s por encima de 600 hasta el límite configurado', async () => {
+  const { jm } = mk({ COLMENA_WAIT_MAX_S: '1800' });
+  const id = jm.submit(S('hola'));
+  const w = await jm.wait([id], { timeoutS: 1200 });
+  assert.equal(w.done.length, 1);
+  assert.equal(w.done[0].state, 'done');
+});
+test('MC-3: el vencimiento deja continuar esperando hasta el reporte', async () => {
+  process.env.FAKE_DELAY = '1500';
+  try {
+    const { jm } = mk();
+    const id = jm.submit(S('hola con demora'));
+    const first = await jm.wait([id], { timeoutS: 1 });
+    assert.equal(first.pending.length, 1);
+    assert.equal(typeof first.pending[0].elapsedS, 'number');
+    const second = await jm.wait([id], { timeoutS: 10 });
+    assert.equal(second.done.length, 1);
+    assert.equal(second.done[0].state, 'done');
+  } finally { delete process.env.FAKE_DELAY; }
+});

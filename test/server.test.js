@@ -455,6 +455,22 @@ test('cleanup accepts a squash completed through the merge tool', async () => {
   } finally { await client.close(); }
 });
 
+test('MC-3: wait valida timeout_s entre 1 y 1800 sin cancelar al vencer', async () => {
+  const { client, call } = await connect({ COLMENA_WAIT_MAX_S: '1800' });
+  try {
+    assert.match((await call('wait', { job_ids: ['nope'], timeout_s: 0 })).error, /timeout_s|1|1800/i);
+    assert.match((await call('wait', { job_ids: ['nope'], timeout_s: 5000 })).error, /timeout_s|1|1800/i);
+    const fast = await call('run', { task: 'hola', cwd: tmp('luna-mc3-'), wait: true, timeout_s: 1200 });
+    assert.equal(fast.state, 'done');
+    const slow = await call('run', { task: 'SLEEP', cwd: tmp('luna-mc3-slow-') });
+    const w = await call('wait', { job_ids: [slow.job_id], timeout_s: 1 });
+    assert.equal(w.pending.length, 1);
+    assert.equal(typeof w.pending[0].elapsedS, 'number');
+    assert.ok(['queued', 'running'].includes(w.pending[0].state));
+    assert.equal((await call('status', { job_id: slow.job_id })).state, w.pending[0].state);
+    await call('cancel', { job_id: slow.job_id });
+  } finally { await client.close(); }
+});
 test('errors are returned as tool errors, not crashes', async () => {
   const { client, call } = await connect();
   try {
