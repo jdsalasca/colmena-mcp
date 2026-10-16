@@ -63,6 +63,26 @@ test('changes/diff see edits and new files in worktree', () => {
   const d = iso.diff(p.workdir, p.base, 50);
   assert.equal(d.truncated, true); assert.ok(d.text.length <= 50);
 });
+test('changes/diff are read-only: the git index stays identical', () => {
+  const c = cfg(); const r = repo();
+  const p = iso.prepare(c, { cwd: r, isolation: 'worktree', id: 'idxsafe' });
+  const w = p.workdir;
+  fs.writeFileSync(path.join(w, 'staged.txt'), 's\n'); git(w, 'add', 'staged.txt');
+  fs.appendFileSync(path.join(w, 'a.txt'), 'unstaged\n');
+  fs.writeFileSync(path.join(w, 'new.txt'), 'n\n');
+  const snapshot = () => ({ status: git(w, 'status', '--porcelain'), tree: git(w, 'write-tree') });
+  const before = snapshot();
+
+  const ch = iso.changes(w, p.base);
+  const d = iso.diff(w, p.base);
+  assert.deepEqual(ch.files.sort(), ['a.txt', 'new.txt', 'staged.txt']);
+  assert.match(ch.diffstat, /3 files? changed/);
+  assert.ok(d.text.includes('new.txt'));
+  assert.deepEqual(snapshot(), before);
+
+  iso.changes(w); iso.diff(w);
+  assert.deepEqual(snapshot(), before);
+});
 test('merge ok (merge and squash)', () => {
   for (const strategy of ['merge', 'squash']) {
     const c = cfg(); const r = repo();

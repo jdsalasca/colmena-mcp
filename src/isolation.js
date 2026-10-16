@@ -1,9 +1,28 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }).trim();
+const runGit = (cwd, env, ...args) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }).trim();
+const git = (cwd, ...args) => runGit(cwd, process.env, ...args);
+const gitIndex = (cwd, index, ...args) => runGit(cwd, { ...process.env, GIT_INDEX_FILE: index }, ...args);
 const tryGit = (cwd, ...args) => { try { return { ok: true, out: git(cwd, ...args) }; } catch (e) { return { ok: false, out: `${e.stdout ?? ''}${e.stderr ?? ''}${e.message}` }; } };
+
+function withStagedIndex(workdir, fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-index-'));
+  const index = path.join(dir, 'index');
+  const real = tryGit(workdir, 'rev-parse', '--git-path', 'index');
+  if (real.ok) {
+    const src = path.resolve(workdir, real.out);
+    if (fs.existsSync(src)) fs.copyFileSync(src, index);
+  }
+  try {
+    gitIndex(workdir, index, 'add', '-A');
+    return fn(index);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 export function isGitRepo(cwd) { return tryGit(cwd, 'rev-parse', '--show-toplevel').ok; }
 
@@ -39,17 +58,19 @@ export function prepare(config, { cwd, isolation, id }) {
 export function changes(workdir, base) {
   if (!isGitRepo(workdir)) return { files: [], diffstat: '' };
   if (base) {
-    git(workdir, 'add', '-A');
-    const files = git(workdir, 'diff', base, '--name-only').split('\n').filter(Boolean);
-    return { files, diffstat: files.length ? git(workdir, 'diff', base, '--shortstat') : '' };
+    return withStagedIndex(workdir, (index) => {
+      const files = gitIndex(workdir, index, 'diff', base, '--name-only').split('\n').filter(Boolean);
+      return { files, diffstat: files.length ? gitIndex(workdir, index, 'diff', base, '--shortstat') : '' };
+    });
   }
   const files = git(workdir, 'status', '--porcelain').split('\n').filter(Boolean).map(l => l.slice(3));
   return { files, diffstat: tryGit(workdir, 'diff', '--shortstat', 'HEAD').out };
 }
 
 export function diff(workdir, base, maxChars = 20000) {
-  if (base) git(workdir, 'add', '-A');
-  const text = base ? git(workdir, 'diff', base) : git(workdir, 'diff', 'HEAD');
+  const text = base
+    ? withStagedIndex(workdir, (index) => gitIndex(workdir, index, 'diff', base))
+    : git(workdir, 'diff', 'HEAD');
   return text.length > maxChars ? { text: text.slice(0, maxChars), truncated: true } : { text, truncated: false };
 }
 
