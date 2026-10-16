@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum JobState {
     Queued,
@@ -9,6 +9,16 @@ pub enum JobState {
     Failed,
     Cancelled,
     Orphaned,
+}
+
+impl JobState {
+    pub const fn is_active(self) -> bool {
+        matches!(self, Self::Queued | Self::Running)
+    }
+
+    pub const fn is_terminal(self) -> bool {
+        !self.is_active()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
