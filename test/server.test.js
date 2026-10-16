@@ -109,6 +109,24 @@ test('widget MCP solo publica action y plugins.widget.enabled la oculta', async 
   } finally { await disabled.client.close(); }
 });
 
+test('MC-1: reload_config aplica plugins.widget.enabled en caliente', async () => {
+  const home = codexOnlyHome();
+  const file = path.join(home, 'colmena.yml');
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    assert.equal((await client.listTools()).tools.some(tool => tool.name === 'widget'), true);
+
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('  notify: {enabled: false}', '  notify: {enabled: false}\n  widget: {enabled: false}'));
+    const diff = await call('reload_config', {});
+    assert.ok(diff.plugins.includes('widget.enabled'));
+    assert.equal((await client.listTools()).tools.some(tool => tool.name === 'widget'), false);
+
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('  widget: {enabled: false}', '  widget: {enabled: true}'));
+    await call('reload_config', {});
+    assert.equal((await client.listTools()).tools.some(tool => tool.name === 'widget'), true);
+  } finally { await client.close(); }
+});
+
 test('widget MCP despacha start, status y stop con el controlador inyectado', async () => {
   const home = codexOnlyHome();
   const executable = path.join(home, 'widget.exe');
