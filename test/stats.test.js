@@ -19,8 +19,8 @@ test('computeStats agrega estados, workers, kinds, costos, tokens y duración en
     range: { since: new Date(sinceMs).toISOString(), until: new Date(now).toISOString() },
     totals: { jobs: 5, done: 1, failed: 1, cancelled: 1, orphaned: 1, successRate: 0.25, costUsd: 1.25, durationS: 5 },
     byWorker: {
-      alt: { runs: 2, done: 0, failed: 0, successRate: 0, avgDurationS: 0, costUsd: 0, nominalCostUsd: 0, inputTokens: 0, outputTokens: 0 },
-      luna: { runs: 3, done: 1, failed: 1, successRate: 0.5, avgDurationS: 2.5, costUsd: 1.25, nominalCostUsd: 1.25, inputTokens: 15, outputTokens: 22 },
+      alt: { runs: 2, done: 0, failed: 0, successRate: 0, reviewed: 0, accepted: 0, needsWork: 0, reviewCoverage: 0, acceptanceRate: null, avgDurationS: 0, costUsd: 0, nominalCostUsd: 0, inputTokens: 0, outputTokens: 0 },
+      luna: { runs: 3, done: 1, failed: 1, successRate: 0.5, reviewed: 0, accepted: 0, needsWork: 0, reviewCoverage: 0, acceptanceRate: null, avgDurationS: 2.5, costUsd: 1.25, nominalCostUsd: 1.25, inputTokens: 15, outputTokens: 22 },
     },
     byKind: {
       review: { runs: 1, done: 0, failed: 0, successRate: 0, avgDurationS: 0, costUsd: 0, inputTokens: 0, outputTokens: 0 },
@@ -77,6 +77,35 @@ test('computeStats acepta el worker __proto__ sin alterar el prototipo', () => {
   assert.equal(stats.byWorker.__proto__.runs, 1);
   assert.equal(stats.byKind.__proto__.runs, 1);
   assert.equal(Object.hasOwn(Object.prototype, 'runs'), false);
+});
+
+test('computeStats separa por worker cobertura de revisión y aceptación sin contar sin veredicto como rechazo', () => {
+  const metas = [
+    { id: 'a1', createdAt: now, state: 'done', worker: 'luna', kind: 'run', verdict: 'accepted' },
+    { id: 'a2', createdAt: now, state: 'done', worker: 'luna', kind: 'run', verdict: 'accepted' },
+    { id: 'a3', createdAt: now, state: 'failed', worker: 'luna', kind: 'run', verdict: 'needs_work' },
+    { id: 'a4', createdAt: now, state: 'done', worker: 'luna', kind: 'run' },
+    { id: 'b1', createdAt: now, state: 'done', worker: 'alt', kind: 'run' },
+    { id: 'b2', createdAt: now, state: 'done', worker: 'alt', kind: 'run', verdict: 'needs_work' },
+    { id: 'c1', createdAt: now, state: 'done', worker: 'otro', kind: 'run', verdict: 'banana' },
+  ];
+
+  const stats = computeStats(metas, { sinceMs: now, now });
+
+  assert.deepEqual(stats.byWorker.luna, {
+    runs: 4, done: 3, failed: 1, successRate: 0.75,
+    reviewed: 3, accepted: 2, needsWork: 1, reviewCoverage: 0.75, acceptanceRate: 2 / 3,
+    avgDurationS: 0, costUsd: 0, nominalCostUsd: 0, inputTokens: 0, outputTokens: 0,
+  });
+  assert.deepEqual(stats.byWorker.alt, {
+    runs: 2, done: 2, failed: 0, successRate: 1,
+    reviewed: 1, accepted: 0, needsWork: 1, reviewCoverage: 0.5, acceptanceRate: 0,
+    avgDurationS: 0, costUsd: 0, nominalCostUsd: 0, inputTokens: 0, outputTokens: 0,
+  });
+  assert.equal(stats.byWorker.otro.reviewed, 0);
+  assert.equal(stats.byWorker.otro.reviewCoverage, 0);
+  assert.equal(stats.byWorker.otro.acceptanceRate, null);
+  assert.equal('reviewed' in stats.byKind.run, false);
 });
 
 test('computeStats devuelve ceros y tasa nula cuando no hay metas', () => {
