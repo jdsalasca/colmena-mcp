@@ -252,15 +252,17 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
       return res;
     });
 
-  tool('cleanup', 'Elimina worktrees y ramas colmena/* creados por este servidor (de un job, o más viejos que N días).',
-    { job_id: z.string().optional(), older_than_days: z.number().optional(), force: z.boolean().optional().describe('necesario para descartar trabajo no fusionado') },
+  tool('cleanup', 'Elimina worktrees y ramas colmena/* creados por este servidor (de un job, o más viejos que N días). Con older_than_days y force purga además las carpetas de jobs terminales (done/failed/cancelled/orphaned) terminados antes del umbral; los no terminales y vivos nunca se borran.',
+    { job_id: z.string().optional(), older_than_days: z.number().optional(), force: z.boolean().optional().describe('necesario para descartar trabajo no fusionado y purgar jobs terminales antiguos') },
     a => {
       if (!a.job_id && a.older_than_days == null) throw new Error('indica job_id u older_than_days');
       if (a.job_id) {
         const m = terminalMeta(a.job_id);
         if (m.branch && !m.merged && !a.force && !iso.isMerged(m.cwd, m.branch, m.base)) throw new Error(`job ${a.job_id} no fusionado: su trabajo se perdería; usa merge o force:true`);
       } else if (!a.force) throw new Error('older_than_days puede descartar trabajo no fusionado; repite con force:true');
-      return iso.cleanup(config, { id: a.job_id, olderThanDays: a.older_than_days });
+      const result = iso.cleanup(config, { id: a.job_id, olderThanDays: a.older_than_days });
+      const jobsRemoved = a.older_than_days == null ? [] : jm.pruneTerminalJobs({ olderThanDays: a.older_than_days, id: a.job_id });
+      return { ...result, jobsRemoved };
     });
 
   return { server, jm, notify };

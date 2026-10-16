@@ -506,3 +506,26 @@ test('MC-3: el vencimiento deja continuar esperando hasta el reporte', async () 
     assert.equal(second.done[0].state, 'done');
   } finally { delete process.env.FAKE_DELAY; }
 });
+test('cleanup purge: solo terminales vencidos, filtro por id y en curso intacto', async () => {
+  const { jm, config } = mk();
+  const old1 = jm.submit(S('hola uno'));
+  const old2 = jm.submit(S('hola dos'));
+  const running = jm.submit(S('SLEEP'));
+  await jm.wait([old1, old2]);
+  const backdate = id => {
+    const file = path.join(config.jobsDir, id, 'meta.json');
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), endedAt: Date.now() - 5 * 86400000 }));
+  };
+  backdate(old1); backdate(old2);
+
+  assert.deepEqual(jm.pruneTerminalJobs({ olderThanDays: 1, id: old1 }), [old1]);
+  assert.equal(fs.existsSync(jm.jobDir(old1)), false);
+  assert.equal(fs.existsSync(jm.jobDir(old2)), true);
+  assert.deepEqual(jm.pruneTerminalJobs({ olderThanDays: 1 }), [old2]);
+  assert.equal(jm.status(running).state, 'running');
+  assert.equal(fs.existsSync(jm.jobDir(running)), true);
+  assert.deepEqual(jm.pruneTerminalJobs({ olderThanDays: 0 }), []);
+
+  await jm.cancel(running);
+  await jm.wait([running], { timeoutS: 20 });
+});

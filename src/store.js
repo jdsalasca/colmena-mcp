@@ -25,6 +25,9 @@ export function createStore(config) {
       write(metaPath(id), next);
       return next;
     },
+    remove(id) {
+      fs.rmSync(jobDir(id), { recursive: true, force: true });
+    },
     list({ state, limit } = {}) {
       let ids = [];
       try { ids = fs.readdirSync(config.jobsDir); } catch { return []; }

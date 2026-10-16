@@ -473,6 +473,19 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     pump();
   }
 
+  // Old terminal jobs are the only thing cleanup may purge: live jobs (even a stale meta raced ahead of its state) are never touched.
+  function pruneTerminalJobs({ olderThanDays, id } = {}) {
+    const cutoff = Date.now() - olderThanDays * 86400000;
+    const removed = [];
+    for (const m of store.list({})) {
+      if ((id && m.id !== id) || !TERMINAL.has(m.state) || live.has(m.id)) continue;
+      if ((m.endedAt ?? m.createdAt) >= cutoff) continue;
+      store.remove(m.id);
+      removed.push(m.id);
+    }
+    return removed;
+  }
+
   function shutdown() {
     for (const state of live.values()) {
       clearTimeout(state.timer);
@@ -485,7 +498,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
 
   return {
     bus, resolveWorker, routeWorker: spec => chooseWorker(config.settings, ledger, spec), workers: () => workerStatus(config.settings, ledger),
-    submit, status, result, wait, cancel, continueJob, summarize, compact, review, verdict, recoverOrphans, shutdown,
+    submit, status, result, wait, cancel, continueJob, summarize, compact, review, verdict, recoverOrphans, pruneTerminalJobs, shutdown,
     list: f => store.list(f ?? {}).map(m => status(m.id)),
     metas: () => store.list({}),
     meta: id => need(id),

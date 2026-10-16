@@ -5,6 +5,9 @@
 # `standards` añade instrucciones de calidad a los jobs `run`; los helpers no reciben ese preámbulo.
 # Si omites `preamble`, se usa el estándar español integrado (TDD, DRY, reutilización, evidencia y reporte).
 # `providers.opencode.isolate_config` separa OpenCode de los MCP, plugins y agentes globales del usuario.
+# Mantenimiento del historial: `cleanup {older_than_days, force: true}` purga worktrees/ramas y las carpetas
+# de jobs terminales (done/failed/cancelled/orphaned) terminados antes del umbral; nunca toca jobs en curso,
+# en cola o vivos. Devuelve los ids en `jobsRemoved`.
 
 preferences:
   provider: auto                # codex | opencode; cámbialo en caliente si quieres priorizar otro proveedor
