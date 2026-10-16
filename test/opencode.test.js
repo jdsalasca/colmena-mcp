@@ -38,6 +38,24 @@ test('opencode parseLine: session, text, usage with cost, garbage', () => {
   assert.equal(parseLine('nope').kind, 'other');
   assert.equal(parseLine('{"type":"tool_use"}').kind, 'other');
 });
+test('opencode env isolates config by default and creates the selected config directory', () => {
+  const home = tmp('colmena-oc-env-');
+  const isolatedPath = path.join(home, 'opencode-config');
+  assert.deepEqual(oc.env({ home, settings: { providers: { opencode: { isolate_config: true } } } }), {
+    XDG_CONFIG_HOME: isolatedPath,
+  });
+  assert.ok(fs.statSync(isolatedPath).isDirectory());
+  const relativeHome = path.relative(process.cwd(), home);
+  assert.equal(oc.env({ home: relativeHome, settings: { providers: { opencode: { isolate_config: true } } } }).XDG_CONFIG_HOME,
+    path.resolve(relativeHome, 'opencode-config'));
+
+  const customPath = path.join(home, 'custom-config');
+  assert.deepEqual(oc.env({ home, settings: { providers: { opencode: { isolate_config: true, config_dir: customPath } } } }), {
+    XDG_CONFIG_HOME: customPath,
+  });
+  assert.ok(fs.statSync(customPath).isDirectory());
+  assert.equal(oc.env({ home, settings: { providers: { opencode: { isolate_config: false } } } }), undefined);
+});
 
 function ocHome(extra = '') {
   const home = tmp('colmena-oh-');
@@ -56,6 +74,42 @@ const mk = () => {
   return { jm: createJobManager(config), config };
 };
 const S = (task, extra = {}) => ({ task, cwd: tmp('colmena-c-'), isolation: 'inplace', ...extra });
+
+test('OpenCode jobs pass the configured XDG_CONFIG_HOME to the fake process', async () => {
+  const log = path.join(tmp('colmena-oc-config-log-'), 'fake.log');
+  const previousLog = process.env.FAKE_LOG;
+  const previousXdg = process.env.XDG_CONFIG_HOME;
+  process.env.FAKE_LOG = log;
+  process.env.XDG_CONFIG_HOME = 'inherited-opencode-config';
+  const calls = () => fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  try {
+    const standard = mk();
+    const first = standard.jm.submit(S('default isolation', { worker: 'ds-flash' }));
+    await standard.jm.wait([first]);
+    assert.equal(calls()[0].xdgConfigHome, path.join(standard.config.home, 'opencode-config'));
+    assert.ok(fs.statSync(path.join(standard.config.home, 'opencode-config')).isDirectory());
+
+    const disabled = getConfig({ ...baseEnv(ocHome('providers: {opencode: {isolate_config: false}}\n')), COLMENA_OPENCODE_BIN: fakeOpencode });
+    const disabledManager = createJobManager(disabled);
+    const second = disabledManager.submit(S('disabled isolation', { worker: 'ds-flash' }));
+    await disabledManager.wait([second]);
+    assert.equal(calls()[1].xdgConfigHome, 'inherited-opencode-config');
+
+    const customPath = path.join(tmp('colmena-oc-custom-'), 'config');
+    const yamlPath = customPath.replaceAll('\\', '/');
+    const custom = getConfig({ ...baseEnv(ocHome(`providers:\n  opencode: {config_dir: '${yamlPath}'}\n`)), COLMENA_OPENCODE_BIN: fakeOpencode });
+    const customManager = createJobManager(custom);
+    const third = customManager.submit(S('custom isolation', { worker: 'ds-flash' }));
+    await customManager.wait([third]);
+    assert.equal(calls()[2].xdgConfigHome, path.resolve(customPath));
+    assert.ok(fs.statSync(customPath).isDirectory());
+  } finally {
+    if (previousLog === undefined) delete process.env.FAKE_LOG;
+    else process.env.FAKE_LOG = previousLog;
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previousXdg;
+  }
+});
 
 test('end-to-end opencode worker: last text wins, cost summed, session saved', async () => {
   const { jm } = mk();

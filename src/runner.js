@@ -2,9 +2,9 @@ import { spawn, execFile } from 'node:child_process';
 import fs from 'node:fs';
 
 // cmd = {bin, prefixArgs}; parseLine normalizes provider output into {kind, ...} events.
-export function startRun(cmd, args, { cwd, onEvent = () => {}, logPath, parseLine }) {
+export function startRun(cmd, args, { cwd, onEvent = () => {}, logPath, parseLine, env = {} }) {
   const child = spawn(cmd.bin, [...cmd.prefixArgs, ...args], {
-    cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd, env: { ...process.env, ...env }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
   const log = logPath ? fs.createWriteStream(logPath, { flags: 'a' }) : null;
   let buf = ''; let errBuf = '';

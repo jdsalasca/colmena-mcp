@@ -79,11 +79,12 @@ test('reload_config updates workers, reports a compact diff, and preserves setti
       .replace('  alt: {provider: codex, model: gpt-alt, effort: high, priority: 2}', '  new: {provider: codex, model: gpt-new, priority: 2}')
       .replace('roles: {reporter: luna-max, summarizer: luna-max, reviewer: luna-max}', 'roles: {reporter: luna-max, summarizer: luna-max, reviewer: new}')
       .replace('defaults: {worker: luna-max}', 'defaults: {worker: new, max_parallel: 8}')
-      .replace('plugins:\n  notify: {enabled: false}', 'plugins:\n  notify: {enabled: false}\n  report: {enabled: false}'));
+      .replace('plugins:\n  notify: {enabled: false}', 'plugins:\n  notify: {enabled: false}\n  report: {enabled: false}')
+      + '\nproviders: {opencode: {isolate_config: false}}\n');
     const diff = await call('reload_config', {});
     assert.deepEqual(diff, {
       added: ['new'], removed: ['alt'], changed: [{ alias: 'luna-max', fields: ['budget.monthly_usd', 'model'] }],
-      roles: ['reviewer'], defaults: ['max_parallel', 'worker'],
+      roles: ['reviewer'], defaults: ['max_parallel', 'worker'], providers: ['opencode.isolate_config'],
     });
     assert.equal((await client.listTools()).tools.some(tool => tool.name === 'report'), false);
     const run = await call('run', { task: 'modelo renovado', worker: 'luna-max', cwd: tmp('luna-reload-c-'), wait: true });

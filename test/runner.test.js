@@ -9,6 +9,7 @@ import { startRun } from '../src/runner.js';
 import { getAdapter } from '../src/providers/index.js';
 
 const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-codex.js');
+const fakeEnv = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-env.js');
 const cfg = () => getConfig({ COLMENA_CODEX_BIN: fake, COLMENA_HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-r-')) });
 const codex = getAdapter('codex');
 const luna = { provider: 'codex', model: 'gpt-6-luna', effort: 'max' };
@@ -68,6 +69,25 @@ test('startRun with fake: events, exit 0, -o file, log', async () => {
   assert.ok(evs.some(e => e.kind === 'message' && /RESULT/.test(e.text)));
   assert.match(fs.readFileSync(path.join(dir, 'last.md'), 'utf8'), /RESULT/);
   assert.ok(fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').includes('thread.started'));
+});
+test('startRun merges optional env into the child process environment', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-env-'));
+  const previous = process.env.COLMENA_RUNNER_INHERITED;
+  process.env.COLMENA_RUNNER_INHERITED = 'inherited';
+  try {
+    const events = [];
+    const r = startRun({ bin: process.execPath, prefixArgs: [fakeEnv] }, [], {
+      cwd: dir,
+      env: { COLMENA_RUNNER_TEST: 'overridden' },
+      parseLine: line => JSON.parse(line),
+      onEvent: event => events.push(event),
+    });
+    assert.equal((await r.done).code, 0);
+    assert.deepEqual(events, [{ setting: 'overridden', inherited: 'inherited' }]);
+  } finally {
+    if (previous === undefined) delete process.env.COLMENA_RUNNER_INHERITED;
+    else process.env.COLMENA_RUNNER_INHERITED = previous;
+  }
 });
 test('startRun FAIL → code 1 + stderr tail', async () => {
   const c = cfg(); const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-w-'));

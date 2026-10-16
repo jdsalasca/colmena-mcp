@@ -96,6 +96,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
       readonly: meta.readonly, resumeSessionId: meta.resumeSessionId, ephemeral: meta.ephemeral, worker,
     }), {
       cwd: meta.workdir, logPath: path.join(dir, 'events.jsonl'), parseLine: adapter.parseLine,
+      env: adapter.env?.(config),
       onEvent: e => {
         if (e.kind === 'session' && e.sessionId !== lastSessionId) { lastSessionId = e.sessionId; store.update(id, { sessionId: e.sessionId }); }
         else if (e.kind === 'message') lastText = e.text;
