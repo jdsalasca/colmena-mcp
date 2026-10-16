@@ -81,6 +81,23 @@ test('workers + report tools end to end', async () => {
   } finally { await client.close(); }
 });
 
+test('MC-9: initialize reporta la versión de package.json', async () => {
+  const { client } = await connect();
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(here, '..', 'package.json'), 'utf8'));
+    assert.deepEqual(client.getServerVersion(), { name: 'colmena', version: pkg.version });
+  } finally { await client.close(); }
+});
+
+test('MC-9: package-lock.json coincide en nombre y versión con package.json', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(here, '..', 'package.json'), 'utf8'));
+  const lock = JSON.parse(fs.readFileSync(path.join(here, '..', 'package-lock.json'), 'utf8'));
+  assert.equal(lock.name, pkg.name);
+  assert.equal(lock.version, pkg.version);
+  assert.equal(lock.packages[''].name, pkg.name);
+  assert.equal(lock.packages[''].version, pkg.version);
+});
+
 test('plugins.present.enabled false oculta la tool MCP', async () => {
   const home = codexOnlyHome();
   const file = path.join(home, 'colmena.yml');

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import YAML from 'yaml';
@@ -13,6 +14,8 @@ import { computeStats, DAY_MS } from './stats.js';
 import { buildImprovePrompt, hasRecentImprove, PENDING_FOCUSES, CONTINUOUS_IMPROVEMENT_PROMPT } from './plugins/improve.js';
 import { createWidgetController } from './plugins/widget.js';
 import { writeFileAtomic } from './atomic-write.js';
+
+const { version: packageVersion } = createRequire(import.meta.url)('../package.json');
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
 const isolationEnum = z.enum(['worktree', 'inplace', 'readonly']).optional()
@@ -78,7 +81,7 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
   const nc = config.settings.plugins.notify;
   const notify = notifyPlugin({ bus: jm.bus, jm, cfg: nc, notifier: createNotifier(config.notifier), logPath: config.activityPath });
   jm.recoverOrphans();
-  const server = new McpServer({ name: 'colmena', version: '0.2.0' });
+  const server = new McpServer({ name: 'colmena', version: packageVersion });
 
   const ok = obj => ({ content: [{ type: 'text', text: JSON.stringify(obj) }] });
   const fail = e => ({ isError: true, content: [{ type: 'text', text: `Error: ${e?.message ?? e}` }] });
