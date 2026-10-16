@@ -26,10 +26,10 @@ const Report = z.object({ enabled: z.boolean().default(true), default_style: z.s
 export const DEFAULT_SETTINGS = {
   workers: {
     'luna-max': { provider: 'codex', model: 'gpt-6-luna', effort: 'max', priority: 1, strengths: ['code', 'refactor', 'tests'] },
-    'deepseek-pro': { provider: 'opencode', model: 'opencode-go/deepseek-v4-pro', effort: 'max', priority: 2, strengths: ['code'] },
-    'deepseek-flash': { provider: 'opencode', model: 'opencode-go/deepseek-v4.1-flash', priority: 3, strengths: ['docs', 'summary', 'report'] },
+    // Same GPT-6 Luna model through OpenCode Go at $0.10 in / $0.50 out per Mtok: the cheapest strong option (checked 2026-10-16).
+    'luna-go': { provider: 'opencode', model: 'opencode-go/gpt-6-luna', effort: 'max', priority: 2, strengths: ['code', 'docs', 'summary', 'report'], budget: { monthly_usd: 10 } },
   },
-  roles: { reporter: 'deepseek-flash', summarizer: 'deepseek-flash', reviewer: 'luna-max' },
+  roles: { reporter: 'luna-go', summarizer: 'luna-go', reviewer: 'luna-max' },
   defaults: { worker: 'luna-max', max_parallel: 4, timeout_min: 60 },
   plugins: { notify: {}, report: {} },
 };

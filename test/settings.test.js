@@ -11,11 +11,13 @@ const withYml = (yml, env = {}) => { const h = home(); fs.writeFileSync(path.joi
 
 test('no yml → defaults', () => {
   const s = loadSettings(home(), {});
-  assert.deepEqual(Object.keys(s.workers).sort(), ['deepseek-flash', 'deepseek-pro', 'luna-max']);
+  assert.deepEqual(Object.keys(s.workers).sort(), ['luna-go', 'luna-max']);
+  assert.equal(s.workers['luna-go'].model, 'opencode-go/gpt-6-luna');
+  assert.equal(s.workers['luna-go'].budget.monthly_usd, 10);
   assert.equal(s.workers['luna-max'].model, 'gpt-6-luna');
   assert.equal(s.workers['luna-max'].effort, 'max');
   assert.equal(s.defaults.worker, 'luna-max');
-  assert.equal(s.roles.reporter, 'deepseek-flash');
+  assert.equal(s.roles.reporter, 'luna-go');
   assert.equal(s.plugins.notify.heartbeat_min, 10);
   assert.equal(s.plugins.report.default_style, 'papercraft');
   assert.deepEqual(DEFAULT_SETTINGS.defaults.max_parallel, 4);

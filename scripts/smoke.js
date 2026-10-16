@@ -12,7 +12,7 @@ const config = getConfig({ ...process.env, COLMENA_HOME: home, COLMENA_NOTIFIER:
 console.log('codex:', config.codex.bin, '\nopencode:', config.opencode.bin, '\nhome:', home);
 const jm = createJobManager(config);
 const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-smoke-cwd-'));
-const only = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2].split(',') : ['luna-max', 'deepseek-flash'];
+const only = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2].split(',') : ['luna-max', 'luna-go'];
 
 const ids = only.map(worker => jm.submit({ task: 'Responde únicamente con la palabra pong en RESULT. No ejecutes ninguna herramienta.', cwd, isolation: 'readonly', worker }));
 const w = await jm.wait(ids, { timeoutS: 300 });

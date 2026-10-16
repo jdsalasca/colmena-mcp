@@ -9,7 +9,7 @@ Tú eres el **PM y validador de calidad**; los workers (Codex, OpenCode) impleme
 
 ## 1. Elegir worker
 - `workers` → mira `available`, `remaining_usd`, `strengths` y `priority`.
-- Código difícil o refactor → `luna-max`. Docs, resúmenes, tareas livianas → `deepseek-flash`. Si omites `worker` el router elige (usa `kind: "code"|"docs"|…` como pista).
+- Por defecto `luna-max` (Codex, prioridad 1); cuando se agote o necesites paralelismo extra → `luna-go` (mismo Luna vía OpenCode Go, barato y con presupuesto). Si omites `worker` el router elige (usa `kind: "code"|"docs"|…` como pista).
 - Si un worker está sin presupuesto, `run` falla con alternativas: no hay cambio silencioso; decide tú.
 - OpenCode carga ~50k tokens de contexto por ejecución: no lo uses para tareas triviales.
 

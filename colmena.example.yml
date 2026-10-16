@@ -1,5 +1,7 @@
 # Copia este archivo a ~/.colmena/colmena.yml (o apunta COLMENA_CONFIG a él) y ajústalo.
 # Si defines `workers`, REEMPLAZAN a los de por defecto; el resto de secciones se mezclan con los defaults.
+# Los modelos viven AQUÍ y solo aquí: las herramientas únicamente aceptan estos alias, así nada se lanza con un modelo caro por accidente.
+# Cambia el archivo y llama a la tool `reload_config`: no hace falta reiniciar.
 
 workers:
   luna-max:
@@ -11,22 +13,22 @@ workers:
     # price_per_mtok: {input: 1.0, output: 8.0}   # USD por millón de tokens; Codex no informa costo, así se estima
     # budget: {monthly_usd: 20}                   # al llegar al tope el worker queda "sin presupuesto"
     # enabled: true
-  deepseek-pro:
+  luna-go:                     # el mismo GPT-6 Luna vía OpenCode Go: $0.10 entrada / $0.50 salida por Mtok
     provider: opencode
-    model: opencode-go/deepseek-v4-pro
+    model: opencode-go/gpt-6-luna
     effort: max
     priority: 2
-    strengths: [code]
+    strengths: [code, docs, summary, report]
     budget: {monthly_usd: 10}
-  deepseek-flash:
-    provider: opencode
-    model: opencode-go/deepseek-v4.1-flash
-    priority: 3
-    strengths: [docs, summary, report]
+
+# Otras opciones de OpenCode Go (USD por Mtok entrada/salida, revisado 2026-10-16):
+#   opencode-go/deepseek-v4.1-flash 0.15/0.60 · opencode-go/deepseek-v4-pro 0.66/1.98 · opencode-go/claude-haiku-5-5 0.10/0.50
+#   opencode-go/glm-5.3-flash 0.15/0.50 · opencode-go/cat-jam-free 0/0 (gratis, calidad sin verificar)
+# Lista completa y precios: `opencode models opencode-go --verbose`.
 
 roles:                         # quién hace los trabajos auxiliares
-  reporter: deepseek-flash     # tool report
-  summarizer: deepseek-flash   # tools summarize / compact
+  reporter: luna-go            # tool report
+  summarizer: luna-go          # tools summarize / compact
   reviewer: luna-max           # tool review
 
 defaults:

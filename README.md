@@ -24,7 +24,7 @@ npm test
 claude mcp add -s user colmena -- node "<ruta-absoluta>/colmena-mcp/src/server.js"
 ```
 
-Humo real (gasta unas pocas llamadas): `npm run smoke -- luna-max,deepseek-flash --report`.
+Humo real (gasta unas pocas llamadas): `npm run smoke -- luna-max,luna-go --report`.
 
 ## Configuración: `colmena.yml`
 
@@ -33,9 +33,8 @@ Ubicación: `$COLMENA_CONFIG` o `~/.colmena/colmena.yml`. Sin archivo se usan lo
 ```yaml
 workers:
   luna-max:       {provider: codex,    model: gpt-6-luna, effort: max, priority: 1, strengths: [code, refactor, tests]}
-  deepseek-pro:   {provider: opencode, model: opencode-go/deepseek-v4-pro, effort: max, priority: 2, strengths: [code], budget: {monthly_usd: 10}}
-  deepseek-flash: {provider: opencode, model: opencode-go/deepseek-v4.1-flash, priority: 3, strengths: [docs, summary, report]}
-roles:    {reporter: deepseek-flash, summarizer: deepseek-flash, reviewer: luna-max}
+  luna-go:        {provider: opencode, model: opencode-go/gpt-6-luna, effort: max, priority: 2, strengths: [code, docs, summary, report], budget: {monthly_usd: 10}}
+roles:    {reporter: luna-go, summarizer: luna-go, reviewer: luna-max}
 defaults: {worker: luna-max, max_parallel: 4, timeout_min: 60}
 plugins:
   notify: {enabled: true, on: [start, finish, fail], heartbeat_min: 10}
@@ -46,7 +45,8 @@ Notas:
 - `effort` se pasa como `model_reasoning_effort` (Codex) o `--variant` (OpenCode).
 - OpenCode informa el costo en USD de cada ejecución. **Codex no**: para contabilizarlo añade `price_per_mtok: {input: …, output: …}` al worker.
 - El saldo real de tus cuentas no se puede consultar por API: el presupuesto es **declarativo + conteo local** (`usage.json`).
-- OpenCode carga mucho contexto propio (~50k tokens de entrada por ejecución, ≈ $0.007 en flash y ≈ $0.034 en pro): conviene delegarle tareas con cierto peso.
+- **Por qué solo estos dos workers:** en OpenCode Go (revisado 2026-10-16, USD por Mtok entrada/salida) `gpt-6-luna` cuesta 0.10/0.50, menos que `deepseek-v4.1-flash` (0.15/0.60) y mucho menos que `deepseek-v4-pro` (0.66/1.98), siendo el mismo modelo que corre en Codex. Una ejecución trivial sale en ≈ $0.004 (flash ≈ $0.007, pro ≈ $0.034). `luna-max` (Codex) va primero y `luna-go` es el respaldo con presupuesto. Otras opciones están comentadas en `colmena.example.yml`.
+- OpenCode carga mucho contexto propio (~30-50k tokens por ejecución): conviene delegarle tareas con cierto peso.
 
 ### Variables de entorno
 `COLMENA_HOME`, `COLMENA_CONFIG`, `COLMENA_CODEX_BIN`, `COLMENA_OPENCODE_BIN`, `COLMENA_MAX_PARALLEL`, `COLMENA_JOB_TIMEOUT_MIN`, `COLMENA_NOTIFIER` (`toast`|`log`|`none`). Los nombres `LUNA_*` de la v0.1 se siguen aceptando.
