@@ -3,7 +3,7 @@
 Servidor MCP (stdio) para que **Claude Code orqueste y valide, como un product manager**, mientras una colmena de agentes obreros —**Codex** (Luna) y **OpenCode** (DeepSeek, etc.)— hace el trabajo pesado. Tú gastas pocos tokens: briefs cortos de ida, reportes de ≤15 líneas de vuelta.
 
 - **Workers por alias** en un `colmena.yml`: proveedor + modelo + esfuerzo + prioridad + presupuesto y, opcionalmente, `free: true` para registrar costo cero. Las herramientas solo aceptan un alias, nunca un modelo o flag libre.
-- **Presupuesto y ruteo:** el servidor cuenta el gasto por worker y por mes; un worker `free` conserva el costo nominal aparte y no queda bloqueado por presupuesto. Sin `worker` explícito, elige el proveedor preferido disponible y luego aplica `kind` y prioridad.
+- **Presupuesto y ruteo:** el servidor cuenta el gasto por worker y por mes; cada job puede reservar un costo estimado (`reserve_usd`) al encolar, de modo que N jobs concurrentes descuentan gasto + reservas y no agotan el mismo saldo. Un worker `free` conserva el costo nominal aparte, no reserva y no queda bloqueado por presupuesto. Sin `worker` explícito, elige el proveedor preferido disponible y luego aplica `kind` y prioridad.
 - **Aislamiento por llamada:** `worktree` (rama `colmena/<id>`, por defecto en repos git), `inplace` o `readonly`.
 - **Paralelismo con cola**, sesiones reanudables, resúmenes, compactación y relevo entre agentes.
 - **Plugin `notify`:** toast de Windows al lanzar agentes, latido cada 10 min mientras haya trabajo, y aviso al terminar o fallar.
@@ -38,7 +38,7 @@ workers:
   ds-flash:       {provider: opencode, model: opencode-go/deepseek-v4.1-flash, effort: max, priority: 2, strengths: [code, docs, summary, report], budget: {monthly_usd: 10}}
   max-hive:       {provider: opencode, model: opencode-go/muse-spark-1.3-contributor, effort: high, priority: 9, strengths: [bulk], budget: {monthly_usd: 5}}
 roles:    {reporter: ds-flash, summarizer: ds-flash, reviewer: luna-max, presenter: luna-max}
-defaults: {worker: luna-max, max_parallel: 4, timeout_min: 60, exit_grace_s: 20, retry_transient: 1, wait_max_s: 600, cancel_jobs_on_shutdown: false}
+defaults: {worker: luna-max, max_parallel: 4, timeout_min: 60, exit_grace_s: 20, retry_transient: 1, wait_max_s: 600, cancel_jobs_on_shutdown: false, reserve_usd: 0}
 preferences: {provider: auto} # codex | opencode para priorizar un proveedor sin reiniciar
 plugins:
   notify: {enabled: true, on: [start, finish, fail], heartbeat_min: 10}
@@ -63,13 +63,14 @@ Notas:
 - `COLMENA_MAX_PARALLEL`, `COLMENA_JOB_TIMEOUT_MIN`, `COLMENA_EXIT_GRACE_S` y `COLMENA_RETRY_TRANSIENT` y `COLMENA_WAIT_MAX_S` conservan prioridad sobre los valores YAML.
 - `preferences.provider` acepta `auto` (ruteo actual), `codex` u `opencode`. La tool `preferences` consulta la preferencia y el worker elegido ahora, o la cambia en memoria y en el YAML efectivo (`COLMENA_CONFIG` o `$COLMENA_HOME/colmena.yml`) para el siguiente `run`; no requiere reinicio. Si no hay workers disponibles de ese proveedor, el router usa otro y devuelve un `note`. `worker` explícito siempre manda; las tools auxiliares continúan usando sus roles.
 - `workers` muestra `free` por worker; `stats {since_days?}` resume jobs, éxito, duración, costo registrado y `nominalCostUsd` por worker, tokens, tipos y fallos de la ventana indicada (30 días por defecto).
-- `workers.<alias>.free: true` declara que el modelo de ese worker está cubierto a costo cero: el ledger registra `cost_usd: 0`, `meta.json` conserva `nominalCostUsd` y `result` muestra `cost_usd: 0` junto con `nominal_cost_usd`. El flag exime al worker de su presupuesto mensual. Úsalo solo si tu plan garantiza el costo cero; el costo nominal sigue visible para auditar lo que reportó el proveedor.
+- `workers.<alias>.free: true` declara que el modelo de ese worker está cubierto a costo cero: el ledger registra `cost_usd: 0`, `meta.json` conserva `nominalCostUsd` y `result` muestra `cost_usd: 0` junto con `nominal_cost_usd`. El flag exime al worker de su presupuesto mensual y no reserva saldo. Úsalo solo si tu plan garantiza el costo cero; el costo nominal sigue visible para auditar lo que reportó el proveedor.
+- `reserve_usd` (por worker, o `defaults.reserve_usd` como valor global; defecto `0`) es el costo estimado que cada job reserva al encolar. El router y la tool `workers` descuentan `spent_usd + reserved_usd`: un worker no acepta un job nuevo si su reserva no cabe en el presupuesto, así N jobs simultáneos no consumen el mismo saldo. Al terminar o cancelar, la reserva se libera y el ledger registra el costo real, aunque haya superado la estimación. Los jobs adoptados tras un reinicio conservan su reserva (`meta.reservedUsd`) y los huérfanos la liberan. Solo los workers con `budget` y sin `free` reservan.
 - `meta.json`, `status` y `result` conservan `model`, `provider` y `effort` del worker seleccionados al crear cada job, aunque la configuración se recargue después.
 - `effort` se pasa como `model_reasoning_effort` (Codex) o `--variant` (OpenCode).
 - `providers.opencode.isolate_config` está activo por defecto: OpenCode usa `$COLMENA_HOME/opencode-config` como `XDG_CONFIG_HOME`. Así no hereda los servidores MCP, plugins, agentes, `AGENTS.md` ni skills de la configuración global del usuario; los estándares de Colmena llegan por el preámbulo. La autenticación se conserva en `XDG_DATA_HOME`. Define `config_dir` para usar una configuración mínima propia (la carpeta se crea si falta), o `isolate_config: false` para volver a usar la configuración habitual.
 - Evidencia de la comparación reportada para una ejecución trivial: el contexto de entrada bajó de ~47k a ~8k tokens; `opencode-go/deepseek-v4.1-flash` bajó de $0.0074 a $0.0011 por ejecución; y `opencode-go/cat-jam-free`, que fallaba globalmente con `maximum number of items is 128`, respondió con costo reportado `0`. La configuración global también hizo que un job usara `chatgpt-coordinator` durante más de 10 minutos y se observó `ProviderHeaderTimeoutError` en `step-5-preview`.
 - OpenCode informa el costo en USD de cada ejecución. **Codex no**: para contabilizarlo añade `price_per_mtok: {input: …, output: …}` al worker.
-- El saldo real de tus cuentas no se puede consultar por API: el presupuesto es **declarativo + conteo local** (`usage.json`).
+- El saldo real de tus cuentas no se puede consultar por API: el presupuesto es **declarativo + conteo local** (`usage.json`, que además guarda las reservas de los jobs vivos).
 - **Regla de reparto:** Luna va **solo por Codex** (`luna-max`). En OpenCode Go el worker principal es **DeepSeek V4.1 Flash** (`ds-flash`, $0.15 entrada / $0.60 salida por Mtok, revisado 2026-10-16), con presupuesto mensual. No se usa Luna a través de OpenCode.
 - OpenCode carga mucho contexto propio (~30-50k tokens por ejecución): conviene delegarle tareas con cierto peso.
 
@@ -86,7 +87,7 @@ Notas:
 
 | Tool | Para qué |
 |---|---|
-| `workers` | Workers con prioridad, fortalezas, preferencia (`preferred`), gasto del mes, restante y disponibilidad |
+| `workers` | Workers con prioridad, fortalezas, preferencia (`preferred`), gasto del mes, reservado, restante y disponibilidad |
 | `preferences` | Consulta o cambia en caliente `auto` / `codex` / `opencode`; muestra también el worker que elegiría el router |
 | `stats` | Resumen histórico por estado, worker y tipo (`since_days`, defecto 30) |
 | `reload_config` | Relee y valida `colmena.yml`; jobs posteriores usan los cambios sin reiniciar |

@@ -91,7 +91,7 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
   };
   const terminalMeta = id => { const m = jm.meta(id); if (!TERMINAL.has(m.state)) throw new Error(`job ${id} sigue ${m.state}`); return m; };
 
-  tool('workers', 'Lista los workers de colmena.yml con prioridad, fortalezas, preferencia, gasto del mes, presupuesto restante y disponibilidad. Úsalo para decidir a quién delegar.', {}, () => jm.workers());
+  tool('workers', 'Lista los workers de colmena.yml con prioridad, fortalezas, preferencia, gasto del mes, reservas de jobs vivos, presupuesto restante y disponibilidad. Úsalo para decidir a quién delegar.', {}, () => jm.workers());
 
   const widget = createWidgetController({ home: config.home, ...widgetDependencies });
   const widgetTool = tool('widget', 'Agrega el widget animado al escritorio, consulta su estado o ciérralo. El ejecutable y COLMENA_HOME se resuelven desde la configuración del servidor.',
