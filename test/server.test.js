@@ -28,7 +28,7 @@ async function connect(extraEnv = {}) {
   return { client, call };
 }
 
-const NAMES = ['run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'cancel', 'merge', 'cleanup'];
+const NAMES = ['workers', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'cancel', 'merge', 'cleanup'];
 
 test('lists the 15 tools; no model/effort knobs', async () => {
   const { client } = await connect();

@@ -17,7 +17,7 @@ export function prepare(config, { cwd, isolation, id }) {
   const topDir = path.resolve(top.out);
   const dirty = git(cwd, 'status', '--porcelain').length > 0;
   const wt = path.join(config.worktreesDir, `${path.basename(topDir)}-${id}`);
-  const branch = `luna/${id}`;
+  const branch = `colmena/${id}`;
   fs.mkdirSync(config.worktreesDir, { recursive: true });
   git(topDir, 'worktree', 'add', '-q', '-b', branch, wt, base.out);
   const rel = path.relative(topDir, path.resolve(cwd));
@@ -80,7 +80,7 @@ export function cleanup(config, { id, olderThanDays } = {}) {
     const mainRepo = common.ok ? path.dirname(path.resolve(wt, common.out)) : null;
     if (mainRepo) {
       tryGit(mainRepo, 'worktree', 'remove', '--force', wt);
-      if (branch.startsWith('luna/')) tryGit(mainRepo, 'branch', '-D', branch);
+      if (branch.startsWith('colmena/')) tryGit(mainRepo, 'branch', '-D', branch);
     }
     if (fs.existsSync(wt)) fs.rmSync(wt, { recursive: true, force: true });
     removed.push(wt);

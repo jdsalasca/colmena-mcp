@@ -5,6 +5,8 @@ import { createStore } from './store.js';
 import { EventEmitter } from 'node:events';
 import { startRun } from './runner.js';
 import { getAdapter } from './providers/index.js';
+import { createLedger } from './ledger.js';
+import { pickWorker, workerStatus } from './router.js';
 import { buildPrompt, parseReport } from './report.js';
 import * as iso from './isolation.js';
 
@@ -15,6 +17,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
   const store = createStore(config);
   const settings = config.settings;
   const workers = settings.workers;
+  const ledger = createLedger(config);
 
   function resolveWorker(alias) {
     const name = alias ?? settings.defaults.worker;
@@ -50,7 +53,8 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
 
   function submit(spec) {
     const handoffTexts = (spec.handoff ?? []).map(summaryText);
-    const worker = resolveWorker(spec.worker);
+    if (spec.worker) resolveWorker(spec.worker); // unknown/disabled → clear error before touching anything
+    const worker = resolveWorker(pickWorker(settings, ledger, { worker: spec.worker, kind: spec.taskKind }));
     const cwd = spec.cwd ?? process.cwd();
     const id = store.newId();
     const ws = spec.workspace ?? iso.prepare(config, { cwd, isolation: spec.isolation ?? 'inplace', id });
@@ -119,6 +123,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
       try { const ch = iso.changes(meta.workdir, meta.base); patch.files = ch.files; patch.diffstat = ch.diffstat; } catch {}
     }
     patch.costUsd = costOf(workers[meta.worker], usage);
+    try { ledger.record(meta.worker, usage, patch.costUsd); } catch { /* bookkeeping must never break a job */ }
     const updated = store.update(id, patch);
     bus.emit('job.finished', { id, worker: meta.worker, kind: meta.kind, state: updated.state, task: meta.task, error: updated.error, costUsd: patch.costUsd, usage, startedAt: updated.startedAt, endedAt: updated.endedAt });
     finished.get(id)?.resolve();
@@ -235,7 +240,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
   }
 
   return {
-    bus, resolveWorker,
+    bus, resolveWorker, workers: () => workerStatus(settings, ledger),
     submit, status, result, wait, cancel, continueJob, summarize, compact, review, recoverOrphans,
     list: f => store.list(f ?? {}).map(m => status(m.id)),
     meta: id => need(id),

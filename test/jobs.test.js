@@ -94,7 +94,7 @@ test('worktree job: result lists edited file and branch', async () => {
   const r = jm.result(id);
   assert.equal(r.state, 'done');
   assert.ok(r.files.includes('edited.txt'));
-  assert.match(r.branch, /^luna\//);
+  assert.match(r.branch, /^colmena\//);
   assert.equal(fs.existsSync(path.join(r0, 'edited.txt')), false);
 });
 test('two parallel worktree jobs do not collide', async () => {

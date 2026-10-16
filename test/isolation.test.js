@@ -20,12 +20,12 @@ function repo(name = 'repo') {
 }
 const cfg = () => getConfig({ LUNA_HOME: tmp('luna-h-'), LUNA_CODEX_BIN: 'x.js' });
 
-test('worktree creates luna/<id> under worktreesDir', () => {
+test('worktree creates colmena/<id> under worktreesDir', () => {
   const c = cfg(); const r = repo();
   const p = iso.prepare(c, { cwd: r, isolation: 'worktree', id: 'abc' });
   assert.ok(p.workdir.startsWith(c.worktreesDir));
-  assert.equal(p.branch, 'luna/abc');
-  assert.equal(git(p.workdir, 'rev-parse', '--abbrev-ref', 'HEAD'), 'luna/abc');
+  assert.equal(p.branch, 'colmena/abc');
+  assert.equal(git(p.workdir, 'rev-parse', '--abbrev-ref', 'HEAD'), 'colmena/abc');
   assert.equal(p.readonly, false);
   assert.ok(p.base);
 });
@@ -102,5 +102,5 @@ test('cleanup removes only luna worktrees and branches', () => {
   assert.equal(res.removed.length, 1);
   assert.ok(!fs.existsSync(p.workdir));
   const branches = git(r, 'branch', '--list');
-  assert.ok(!branches.includes('luna/cl1')); assert.ok(branches.includes('keepme'));
+  assert.ok(!branches.includes('colmena/cl1')); assert.ok(branches.includes('keepme'));
 });
