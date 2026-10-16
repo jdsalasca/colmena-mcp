@@ -166,6 +166,7 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
     const previous = config.settings;
     const next = config.reloadSettings();
     notify.update(next.plugins.notify);
+    if (next.plugins.widget.enabled) widgetTool.enable(); else widgetTool.disable();
     if (next.plugins.report.enabled) reportTool.enable(); else reportTool.disable();
     if (next.plugins.present.enabled) presentTool.enable(); else presentTool.disable();
     if (next.plugins.improve.enabled) { improveTool.enable(); improvePrompt.enable(); } else { improveTool.disable(); improvePrompt.disable(); }
