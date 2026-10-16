@@ -1,4 +1,6 @@
 // Fake codex CLI for tests. Honors -C, -o, `resume <id>`; prompt keywords SLEEP / FAIL / EDIT.
+// Contract-error knobs (no network): FAKE_NO_FINAL omits the turn.completed final signal;
+// FAKE_EXPOSE_MODEL=<id> makes the provider expose a model id in its events.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -35,7 +37,7 @@ else setTimeout(() => {
   if (prompt.includes('EDIT')) { fs.writeFileSync(path.join(cwd, 'edited.txt'), 'hola\n'); files = 'edited.txt'; }
   const text = process.env.FAKE_RAW ? process.env.FAKE_RAW : `RESULT: ok (${session})\nFILES: ${files}\nTESTS: 1/1\nRISKS: ninguno`;
   emit({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text } });
-  emit({ type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 5 } });
+  if (!process.env.FAKE_NO_FINAL) emit({ type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 5 }, ...(process.env.FAKE_EXPOSE_MODEL ? { model: process.env.FAKE_EXPOSE_MODEL } : {}) });
   if (out) fs.writeFileSync(out, text);
   if (prompt.includes('LINGER')) setTimeout(() => {}, 600000);
 }, Number(process.env.FAKE_DELAY || 0));
