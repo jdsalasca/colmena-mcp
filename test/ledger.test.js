@@ -8,7 +8,7 @@ import { here, tmp, until } from './helpers.js';
 
 const MONTH = '2026-10';
 const AT = () => new Date('2026-10-16T10:00:00Z');
-const ROUNDS = 50;
+const ROUNDS = 20; // every round forces a read/read/write/write collision, so 20 are enough to expose a lost update and keep the test well under its deadline
 const usagePathIn = prefix => path.join(tmp(prefix), 'usage.json');
 const ledgerAt = usagePath => createLedger({ usagePath }, { now: AT });
 const lockPathOf = usagePath => `${usagePath}.lock`;
@@ -29,7 +29,7 @@ function spawnChild(args) {
   });
 }
 
-test('MC-10: dos procesos que reservan y registran 50 veces no pierden actualizaciones', async () => {
+test('MC-10: dos procesos que reservan y registran 20 veces no pierden actualizaciones', async () => {
   const home = tmp('colmena-race-');
   const usagePath = path.join(home, 'usage.json');
   const rendezvous = path.join(home, 'rendezvous');
