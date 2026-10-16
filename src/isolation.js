@@ -7,6 +7,15 @@ const tryGit = (cwd, ...args) => { try { return { ok: true, out: git(cwd, ...arg
 
 export function isGitRepo(cwd) { return tryGit(cwd, 'rev-parse', '--show-toplevel').ok; }
 
+export function isMerged(cwd, branch, base) {
+  if (!branch) return false;
+  if (base) {
+    const commits = tryGit(cwd, 'rev-list', '--count', `${base}..${branch}`);
+    if (!commits.ok || Number(commits.out) === 0) return false;
+  }
+  return tryGit(cwd, 'merge-base', '--is-ancestor', branch, 'HEAD').ok;
+}
+
 export function prepare(config, { cwd, isolation, id }) {
   if (isolation === 'inplace') return { workdir: cwd, readonly: false };
   if (isolation === 'readonly') return { workdir: cwd, readonly: true };

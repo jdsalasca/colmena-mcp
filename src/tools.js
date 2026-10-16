@@ -241,7 +241,7 @@ export function buildServer(config, { atomicWriteDependencies } = {}) {
       if (!a.job_id && a.older_than_days == null) throw new Error('indica job_id u older_than_days');
       if (a.job_id) {
         const m = terminalMeta(a.job_id);
-        if (m.branch && !m.merged && !a.force) throw new Error(`job ${a.job_id} no fusionado: su trabajo se perdería; usa merge o force:true`);
+        if (m.branch && !m.merged && !a.force && !iso.isMerged(m.cwd, m.branch, m.base)) throw new Error(`job ${a.job_id} no fusionado: su trabajo se perdería; usa merge o force:true`);
       } else if (!a.force) throw new Error('older_than_days puede descartar trabajo no fusionado; repite con force:true');
       return iso.cleanup(config, { id: a.job_id, olderThanDays: a.older_than_days });
     });

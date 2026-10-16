@@ -9,6 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { getConfig } from '../src/config.js';
+import * as iso from '../src/isolation.js';
 import { buildServer } from '../src/tools.js';
 
 import { baseEnv, codexOnlyHome } from './helpers.js';
@@ -342,6 +343,48 @@ test('cleanup refuses to discard unmerged work unless force', async () => {
     assert.match((await call('cleanup', { older_than_days: 0 })).error, /force/);
     const forced = await call('cleanup', { job_id, force: true });
     assert.equal(forced.removed.length, 1);
+  } finally { await client.close(); }
+});
+
+test('cleanup accepts a job branch merged manually without force', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    const repo = tmp('luna-manual-merge-'); git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n'); git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'i');
+    const job = await call('run', { task: 'EDIT manual', cwd: repo, wait: true });
+    const metaPath = path.join(home, 'jobs', job.id, 'meta.json');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    assert.equal(job.state, 'done');
+    assert.equal(meta.merged, undefined);
+
+    git(meta.workdir, 'add', '-A');
+    git(meta.workdir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'manual worker commit');
+    git(repo, 'merge', '--no-ff', '-m', 'manual merge', meta.branch);
+
+    const cleaned = await call('cleanup', { job_id: job.id });
+    assert.ok(!cleaned.error, cleaned.error);
+    assert.equal(cleaned.removed.length, 1);
+  } finally { await client.close(); }
+});
+
+test('cleanup accepts a squash completed through the merge tool', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    const repo = tmp('luna-squash-cleanup-'); git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n'); git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'i');
+    const job = await call('run', { task: 'EDIT squash', cwd: repo, wait: true });
+    const merged = await call('merge', { job_id: job.id, strategy: 'squash' });
+    assert.equal(merged.ok, true);
+    const meta = JSON.parse(fs.readFileSync(path.join(home, 'jobs', job.id, 'meta.json'), 'utf8'));
+    assert.equal(meta.merged, true);
+    assert.equal(iso.isMerged(repo, meta.branch), false);
+
+    const cleaned = await call('cleanup', { job_id: job.id });
+    assert.equal(cleaned.removed.length, 1);
   } finally { await client.close(); }
 });
 

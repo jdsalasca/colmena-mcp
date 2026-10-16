@@ -75,6 +75,35 @@ test('merge ok (merge and squash)', () => {
     assert.equal(git(r, 'status', '--porcelain'), '');
   }
 });
+test('isMerged detects a branch merged manually into HEAD', () => {
+  const r = repo();
+  git(r, 'checkout', '-qb', 'colmena/manual');
+  fs.writeFileSync(path.join(r, 'manual.txt'), 'merged\n');
+  git(r, 'add', '-A'); git(r, 'commit', '-qm', 'manual branch');
+  git(r, 'checkout', '-q', 'main');
+  git(r, 'merge', '--no-ff', '-qm', 'manual merge', 'colmena/manual');
+
+  assert.equal(iso.isMerged(r, 'colmena/manual'), true);
+});
+test('isMerged rejects a branch that still points to its original base', () => {
+  const r = repo();
+  const base = git(r, 'rev-parse', 'HEAD');
+  git(r, 'branch', 'colmena/empty', base);
+
+  assert.equal(iso.isMerged(r, 'colmena/empty', base), false);
+});
+test('isMerged returns false for unmerged or missing branches and a cwd outside git', () => {
+  const r = repo();
+  git(r, 'checkout', '-qb', 'colmena/pending');
+  fs.writeFileSync(path.join(r, 'pending.txt'), 'pending\n');
+  git(r, 'add', '-A'); git(r, 'commit', '-qm', 'pending branch');
+  git(r, 'checkout', '-q', 'main');
+  const base = git(r, 'rev-parse', 'HEAD');
+
+  assert.equal(iso.isMerged(r, 'colmena/pending'), false);
+  assert.equal(iso.isMerged(r, 'colmena/deleted', base), false);
+  assert.equal(iso.isMerged(tmp('luna-not-repo-'), 'colmena/pending', base), false);
+});
 test('merge refused when target dirty', () => {
   const c = cfg(); const r = repo();
   const p = iso.prepare(c, { cwd: r, isolation: 'worktree', id: 'd1' });
