@@ -1,15 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { writeFileAtomic } from './atomic-write.js';
 
 export function createStore(config) {
   const jobDir = id => path.join(config.jobsDir, id);
   const metaPath = id => path.join(jobDir(id), 'meta.json');
-  const write = (file, data) => {
-    const tmp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-    fs.renameSync(tmp, file);
-  };
+  const write = (file, data) => writeFileAtomic(file, JSON.stringify(data, null, 2));
   return {
     newId: () => crypto.randomBytes(4).toString('hex'),
     jobDir,
