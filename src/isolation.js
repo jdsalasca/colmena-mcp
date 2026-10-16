@@ -48,7 +48,9 @@ export function prepare(config, { cwd, isolation, id }) {
   const branch = `colmena/${id}`;
   fs.mkdirSync(config.worktreesDir, { recursive: true });
   git(topDir, 'worktree', 'add', '-q', '-b', branch, wt, base.out);
-  const rel = path.relative(topDir, path.resolve(cwd));
+  // git reports the canonical toplevel; cwd may arrive through a junction, symlink or 8.3 short name (e.g. RUNNER~1 on CI).
+  const canonical = p => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
+  const rel = path.relative(canonical(topDir), canonical(cwd));
   return {
     workdir: rel ? path.join(wt, rel) : wt, branch, base: base.out, readonly: false,
     ...(dirty ? { warning: 'el árbol tiene cambios sin commitear; el worktree parte de HEAD y NO los incluye' } : {}),

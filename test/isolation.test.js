@@ -197,3 +197,16 @@ test('cleanup tolerates broken junctions and vanished paths', () => {
 
   assert.deepEqual(res.removed, []);
 });
+
+test('worktree: cwd reached through a junction/symlink (or an 8.3 short path) maps to the same relative dir', () => {
+  const c = cfg(); const r = repo();
+  fs.mkdirSync(path.join(r, 'sub')); fs.writeFileSync(path.join(r, 'sub', 'f.txt'), 'x');
+  git(r, 'add', '-A'); git(r, 'commit', '-qm', 's');
+  const link = path.join(tmp('luna-link-'), 'alias');
+  fs.symlinkSync(r, link, 'junction');
+  for (const [cwd, rel] of [[link, ''], [path.join(link, 'sub'), 'sub']]) {
+    const p = iso.prepare(c, { cwd, isolation: 'worktree', id: `lnk${rel || 'root'}` });
+    assert.ok(p.workdir.startsWith(c.worktreesDir), `workdir fuera de worktreesDir: ${p.workdir}`);
+    assert.ok(fs.existsSync(path.join(p.workdir, rel ? 'f.txt' : 'a.txt')), `no existe el archivo esperado en ${p.workdir}`);
+  }
+});
