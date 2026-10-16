@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { improveNext } from './improve.js';
 
 const BUILTIN_STYLES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'styles');
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
@@ -82,6 +83,12 @@ Lee, en este orden:
 Escribe el resultado en ${path.join(dir, 'report.html')} (un solo archivo autocontenido). No modifiques ningún otro archivo. Al terminar responde solo: listo.`;
 }
 
+function nextSuggestions(jm, ids, config) {
+  const { enabled, hints } = config.settings.plugins.improve;
+  if (!enabled || !hints) return null;
+  return improveNext(jm, jm.meta(ids[0]).cwd);
+}
+
 export async function generateReport({ jm, config, ids, style, title, subtitle, open = false }) {
   if (!ids?.length) throw new Error('indica al menos un job_id');
   const styleName = style ?? config.settings.plugins.report.default_style;
@@ -111,5 +118,6 @@ export async function generateReport({ jm, config, ids, style, title, subtitle, 
   if (!valid()) { fs.writeFileSync(out, renderFallback(data, styleDir)); usedFallback = true; }
 
   if (open && process.platform === 'win32') { try { spawn('explorer.exe', [out], { detached: true, stdio: 'ignore' }).unref(); } catch { /* best-effort */ } }
-  return { path: out, dir, style: styleName, usedFallback, reporterJob, cost_usd: cost, ...(reporterError ? { reporterError } : {}) };
+  const next = nextSuggestions(jm, ids, config);
+  return { path: out, dir, style: styleName, usedFallback, reporterJob, cost_usd: cost, ...(next ? { next } : {}), ...(reporterError ? { reporterError } : {}) };
 }

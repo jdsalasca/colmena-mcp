@@ -7,6 +7,7 @@ import * as iso from './isolation.js';
 import { notifyPlugin } from './plugins/notify.js';
 import { createNotifier } from './notifier.js';
 import { generateReport } from './plugins/report.js';
+import { buildImprovePrompt, hasRecentImprove, PENDING_FOCUSES, CONTINUOUS_IMPROVEMENT_PROMPT } from './plugins/improve.js';
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
 const isolationEnum = z.enum(['worktree', 'inplace', 'readonly']).optional()
@@ -73,11 +74,34 @@ export function buildServer(config) {
     a => generateReport({ jm, config, ids: a.job_ids, style: a.style, title: a.title, subtitle: a.subtitle, open: a.open }));
   if (!config.settings.plugins.report.enabled) reportTool.disable();
 
+  const improveTool = tool('improve', 'Mejora continua: un agente analiza el repo en un worktree y escribe docs/backlog/<fecha>-<focus>.md con ítems priorizados (impacto, esfuerzo, riesgo) y briefs listos para delegar con TDD y DRY.',
+    {
+      cwd: z.string().optional().describe('Repositorio a analizar (defecto: cwd del servidor)'),
+      focus: z.enum(['backlog', 'features', 'debt', 'all']).optional().describe('backlog (pendientes) | features (nuevas) | debt (deuda técnica) | all (defecto)'),
+      worker: z.string().optional().describe('Alias de worker; sin él, el router elige con kind docs'),
+    },
+    a => {
+      const focus = a.focus ?? 'all';
+      const id = jm.submit({
+        task: buildImprovePrompt(focus), taskKind: 'docs', worker: a.worker,
+        cwd: a.cwd ?? process.cwd(), isolation: 'worktree',
+      });
+      jm.mark(id, { improveFocus: focus });
+      return { job_id: id, ...jm.status(id) };
+    });
+  if (!config.settings.plugins.improve.enabled) improveTool.disable();
+
+  const improvePrompt = server.registerPrompt('continuous-improvement',
+    { title: 'Mejora continua', description: 'Ronda completa de colmena: workers → run_many → wait → review → merge → report → improve.' },
+    () => ({ messages: [{ role: 'user', content: { type: 'text', text: CONTINUOUS_IMPROVEMENT_PROMPT } }] }));
+  if (!config.settings.plugins.improve.enabled) improvePrompt.disable();
+
   tool('reload_config', 'Vuelve a leer y validar colmena.yml. Los jobs existentes conservan su configuración; los siguientes usan la nueva.', {}, () => {
     const previous = config.settings;
     const next = config.reloadSettings();
     notify.update(next.plugins.notify);
     if (next.plugins.report.enabled) reportTool.enable(); else reportTool.disable();
+    if (next.plugins.improve.enabled) { improveTool.enable(); improvePrompt.enable(); } else { improveTool.disable(); improvePrompt.disable(); }
     return settingsDiff(previous, next);
   });
 
@@ -100,9 +124,21 @@ export function buildServer(config) {
 
   tool('status', 'Estado de un job.', { job_id: z.string() }, a => jm.status(a.job_id));
   tool('list', 'Lista jobs recientes.', { state: z.string().optional(), limit: z.number().optional() }, a => jm.list({ state: a.state, limit: a.limit ?? 15 }));
-  tool('wait', 'Espera a uno o todos los jobs (máx 600 s) y devuelve reportes compactos.',
+  const improveHint = id => {
+    const { enabled, hints } = config.settings.plugins.improve;
+    if (!enabled || !hints) return undefined;
+    const cwd = jm.meta(id).cwd;
+    if (hasRecentImprove(jm, cwd)) return undefined;
+    return `todos terminaron: sin improve en las últimas 24 h para ${cwd}; considera \`improve\` (${PENDING_FOCUSES.join(', ')})`;
+  };
+
+  tool('wait', 'Espera a uno o todos los jobs (máx 600 s) y devuelve reportes compactos; si la ronda terminó, añade un hint de mejora continua.',
     { job_ids: z.array(z.string()).min(1), timeout_s: z.number().optional(), mode: z.enum(['any', 'all']).optional() },
-    a => jm.wait(a.job_ids, { mode: a.mode ?? 'all', timeoutS: a.timeout_s ?? 120 }));
+    async a => {
+      const w = await jm.wait(a.job_ids, { mode: a.mode ?? 'all', timeoutS: a.timeout_s ?? 120 });
+      const hint = w.pending.length ? undefined : improveHint(a.job_ids[0]);
+      return hint ? { ...w, hint } : w;
+    });
   tool('result', 'Reporte compacto (RESULT/FILES/TESTS/RISKS), archivos tocados y rama.', { job_id: z.string(), detail: detailEnum }, a => jm.result(a.job_id, { detail: a.detail ?? 'min' }));
 
   tool('diff', 'Diff del trabajo (truncado; el completo queda en disco).', { job_id: z.string(), max_chars: z.number().optional() }, a => {
