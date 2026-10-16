@@ -19,11 +19,11 @@ process.stdout.write('this is not json\n');
 
 if (prompt.includes('SLEEP')) setTimeout(() => {}, 600000);
 else if (prompt.includes('FAIL')) { process.stderr.write('boom: fake failure\n'); process.exit(1); }
-else {
+else setTimeout(() => {
   let files = 'ninguno';
   if (prompt.includes('EDIT')) { fs.writeFileSync(path.join(cwd, 'edited.txt'), 'hola\n'); files = 'edited.txt'; }
   const text = process.env.FAKE_RAW ? process.env.FAKE_RAW : `RESULT: ok (${session})\nFILES: ${files}\nTESTS: 1/1\nRISKS: ninguno`;
   emit({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text } });
   emit({ type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 5 } });
   if (out) fs.writeFileSync(out, text);
-}
+}, Number(process.env.FAKE_DELAY || 0));
