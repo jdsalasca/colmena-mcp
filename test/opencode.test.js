@@ -90,4 +90,31 @@ test('opencode failure keeps stderr; cancel kills it', async () => {
   await jm.cancel(s); await jm.wait([s], { timeoutS: 20 });
   assert.equal(jm.status(s).state, 'cancelled');
 });
+test('sessionId repetido escribe meta.json una sola vez (dedupe)', async () => {
+  const dir = tmp('colmena-oc-dedupe-');
+  const fake = path.join(dir, 'fake-oc-dedupe.mjs');
+  fs.writeFileSync(fake, `const emit = o => process.stdout.write(JSON.stringify(o) + '\\n');
+for (let i = 0; i < 3; i++) emit({ type: 'step_start', sessionID: 'ses_dedupe', part: { type: 'step-start' } });
+emit({ type: 'text', sessionID: 'ses_dedupe', part: { type: 'text', text: 'RESULT: ok\\nFILES: ninguno\\nTESTS: 1/1\\nRISKS: ninguno' } });
+emit({ type: 'step_finish', sessionID: 'ses_dedupe', part: { type: 'step-finish', tokens: { input: 10, output: 2, reasoning: 0 }, cost: 0.01 } });
+`);
+  const config = getConfig({ ...baseEnv(ocHome()), COLMENA_OPENCODE_BIN: fake });
+  const jm = createJobManager(config);
+  const orig = fs.writeFileSync;
+  let sessionWrites = 0;
+  fs.writeFileSync = (f, data, ...rest) => {
+    const s = String(data);
+    // Escrituras por evento de sesión: llevan sessionId pero aún no endedAt (el cierre final sí lo lleva).
+    if (String(f).includes('meta.json') && s.includes('"sessionId"') && !s.includes('"endedAt"')) sessionWrites++;
+    return orig(f, data, ...rest);
+  };
+  try {
+    const id = jm.submit(S('dedupe', { worker: 'ds-flash' }));
+    await jm.wait([id]);
+    assert.equal(jm.result(id, { detail: 'normal' }).sessionId, 'ses_dedupe');
+    assert.equal(sessionWrites, 1);
+  } finally {
+    fs.writeFileSync = orig;
+  }
+});
 test('unused import guard', () => { assert.ok(fakeCodex); });
