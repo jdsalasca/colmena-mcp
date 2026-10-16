@@ -6,7 +6,7 @@ Servidor MCP (stdio) para que **Claude Code orqueste y valide, como un product m
 - **Presupuesto y ruteo:** el servidor cuenta el gasto por worker y por mes; cada job puede reservar un costo estimado (`reserve_usd`) al encolar, de modo que N jobs concurrentes descuentan gasto + reservas y no agotan el mismo saldo. Un worker `free` conserva el costo nominal aparte, no reserva y no queda bloqueado por presupuesto. Sin `worker` explícito, elige el proveedor preferido disponible y luego aplica `kind` y prioridad.
 - **Aislamiento por llamada:** `worktree` (rama `colmena/<id>`, por defecto en repos git), `inplace` o `readonly`.
 - **Paralelismo con cola**, sesiones reanudables, resúmenes, compactación y relevo entre agentes.
-- **Plugin `notify`:** toast de Windows al lanzar agentes, latido cada 10 min mientras haya trabajo, y aviso al terminar o fallar.
+- **Plugin `notify`:** toast de Windows al lanzar agentes, latido cada 10 min mientras haya trabajo, aviso al terminar o fallar, y aviso de presupuesto cuando un worker cruza el umbral o agota su saldo.
 - **Plugins `report` y `present`:** crean un reporte HTML de la ronda y una presentación papercraft de cierre del hito, respectivamente.
 - **Widget de escritorio:** la tool `widget` inicia, consulta y cierra la escena animada de Colmena.
 - **Mejora continua:** `improve` lanza un agente que deja en `docs/backlog/` ítems priorizados con briefs listos para delegar; `report` y `wait` te invitan cuando toca.
@@ -41,7 +41,7 @@ roles:    {reporter: ds-flash, summarizer: ds-flash, reviewer: luna-max, present
 defaults: {worker: luna-max, max_parallel: 4, timeout_min: 60, exit_grace_s: 20, retry_transient: 1, wait_max_s: 600, cancel_jobs_on_shutdown: false, reserve_usd: 0}
 preferences: {provider: auto} # codex | opencode para priorizar un proveedor sin reiniciar
 plugins:
-  notify: {enabled: true, on: [start, finish, fail], heartbeat_min: 10}
+  notify: {enabled: true, on: [start, finish, fail], heartbeat_min: 10, budget_pct: 80}
   report: {enabled: true, default_style: papercraft}
   present: {enabled: true, default_style: papercraft-deck}
   improve: {enabled: true, hints: true}
@@ -119,6 +119,8 @@ Usa `widget {action: start}` para abrir la escena; `status` informa `running` so
 
 ## Notificaciones
 Con `plugins.notify` activo recibes un toast de Windows agrupado al lanzar agentes, con el proveedor visible (`luna-max (codex)`), y un latido cada `heartbeat_min` mientras haya trabajos corriendo o en cola. Los avisos de término y fallo identifican el proveedor (`[codex] luna-max`). Todas las notificaciones terminan con un overview actualizado por proveedor, por ejemplo `En curso: codex 2 · opencode 1 · +1 en cola`, o `En curso: ninguno` cuando no queda trabajo. Sin trabajo no hay latido. El cuerpo del toast respeta el límite de 300 caracteres y acorta la tarea para conservar el overview. Todo queda también en `~/.colmena/activity.log`.
+
+`plugins.notify.budget_pct` (entero 0-100, defecto `80`; `0` lo desactiva) avisa cuando el compromiso (`spent + reserved`) de un worker con `budget` cruza ese porcentaje o agota su saldo, revisándolo al terminar o liberar cada job. Es un aviso por worker y cruce dentro del proceso (no se repite): primero el umbral, luego la extenuación. Los workers `free` o sin `budget` nunca avisan. `reload_config` recoge el knob sin reiniciar.
 
 ## Estilos HTML
 Cada estilo es una carpeta `styles/<nombre>/` con `style.md` y `template.html`; se buscan primero en `~/.colmena/styles/` y luego en el repo. **`papercraft`** genera reportes de ronda con tarjetas y **`papercraft-deck`** genera presentaciones por diapositivas. Si el agente de cualquiera de las tools falla o produce HTML inválido, se rellena la plantilla con un renderizador determinista (`usedFallback: true`).
