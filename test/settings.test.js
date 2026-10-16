@@ -159,6 +159,15 @@ test('invalid plugins.improve identify the field', () => {
   const { h, env } = withYml('plugins: {improve: {enabled: maybe}}\n');
   assert.throws(() => loadSettings(h, env), /plugins\.improve\.enabled/);
 });
+test('plugins.widget defaults enabled and supports override and validation', () => {
+  assert.deepEqual(loadSettings(home(), {}).plugins.widget, { enabled: true });
+
+  const disabled = withYml('plugins: {widget: {enabled: false}}\n');
+  assert.deepEqual(loadSettings(disabled.h, disabled.env).plugins.widget, { enabled: false });
+
+  const invalid = withYml('plugins: {widget: {enabled: "yes"}}\n');
+  assert.throws(() => loadSettings(invalid.h, invalid.env), /plugins\.widget\.enabled/);
+});
 test('config: COLMENA_* beats LUNA_*, settings attached, default home', () => {
   const c = getConfig({ COLMENA_HOME: 'C:\\a', LUNA_HOME: 'C:\\b', COLMENA_CODEX_BIN: 'x.js' });
   assert.ok(c.home.endsWith('a'));

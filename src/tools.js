@@ -11,6 +11,7 @@ import { generateReport } from './plugins/report.js';
 import { generatePresentation } from './plugins/present.js';
 import { computeStats, DAY_MS } from './stats.js';
 import { buildImprovePrompt, hasRecentImprove, PENDING_FOCUSES, CONTINUOUS_IMPROVEMENT_PROMPT } from './plugins/improve.js';
+import { createWidgetController } from './plugins/widget.js';
 import { writeFileAtomic } from './atomic-write.js';
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
@@ -70,7 +71,7 @@ const taskShape = {
   handoff_from: z.array(z.string()).optional().describe('job_ids cuyos resúmenes se inyectan como contexto'),
 };
 
-export function buildServer(config, { atomicWriteDependencies } = {}) {
+export function buildServer(config, { atomicWriteDependencies, widgetDependencies } = {}) {
   const jm = createJobManager(config);
   jm.recoverOrphans();
   const nc = config.settings.plugins.notify;
@@ -89,6 +90,12 @@ export function buildServer(config, { atomicWriteDependencies } = {}) {
   const terminalMeta = id => { const m = jm.meta(id); if (!TERMINAL.has(m.state)) throw new Error(`job ${id} sigue ${m.state}`); return m; };
 
   tool('workers', 'Lista los workers de colmena.yml con prioridad, fortalezas, preferencia, gasto del mes, presupuesto restante y disponibilidad. Úsalo para decidir a quién delegar.', {}, () => jm.workers());
+
+  const widget = createWidgetController({ home: config.home, ...widgetDependencies });
+  const widgetTool = tool('widget', 'Agrega el widget animado al escritorio, consulta su estado o ciérralo. El ejecutable y COLMENA_HOME se resuelven desde la configuración del servidor.',
+    { action: z.enum(['start', 'stop', 'status']).describe('start inicia el widget | status consulta el proceso | stop cierra el widget') },
+    ({ action }) => widget[action]());
+  if (!config.settings.plugins.widget.enabled) widgetTool.disable();
 
   tool('preferences', 'Consulta o cambia en caliente el proveedor preferido por el router y guarda el cambio en el archivo de configuración.',
     { provider: z.enum(['auto', 'codex', 'opencode']).optional().describe('auto conserva el ruteo actual; codex u opencode priorizan ese proveedor') },

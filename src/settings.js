@@ -35,6 +35,7 @@ const Notify = z.object({
 const Report = z.object({ enabled: z.boolean().default(true), default_style: z.string().default('papercraft') });
 const Present = z.object({ enabled: z.boolean().default(true), default_style: z.string().default('papercraft-deck') });
 const Improve = z.object({ enabled: z.boolean().default(true), hints: z.boolean().default(true) });
+const Widget = z.object({ enabled: z.boolean().default(true) });
 const Standards = z.object({ enabled: z.boolean().default(true), preamble: z.string().min(1).default(DEFAULT_STANDARDS_PREAMBLE) });
 const Providers = z.object({
   opencode: z.object({ isolate_config: z.boolean().default(true), config_dir: z.string().min(1).optional() }),
@@ -51,7 +52,7 @@ export const DEFAULT_SETTINGS = {
   roles: { reporter: 'ds-flash', summarizer: 'ds-flash', reviewer: 'luna-max', presenter: 'luna-max' },
   defaults: { worker: 'luna-max', max_parallel: 4, timeout_min: 60, exit_grace_s: 20 },
   preferences: { provider: 'auto' },
-  plugins: { notify: {}, report: {}, present: {}, improve: {} },
+  plugins: { notify: {}, report: {}, present: {}, improve: {}, widget: {} },
   standards: { enabled: true, preamble: DEFAULT_STANDARDS_PREAMBLE },
   providers: { opencode: { isolate_config: true } },
 };
@@ -83,6 +84,7 @@ export function loadSettings(home, env = process.env) {
       report: { ...DEFAULT_SETTINGS.plugins.report, ...(user.plugins?.report ?? {}) },
       present: { ...DEFAULT_SETTINGS.plugins.present, ...(user.plugins?.present ?? {}) },
       improve: { ...DEFAULT_SETTINGS.plugins.improve, ...(user.plugins?.improve ?? {}) },
+      widget: { ...DEFAULT_SETTINGS.plugins.widget, ...(user.plugins?.widget ?? {}) },
     },
     standards: user.standards == null ? DEFAULT_SETTINGS.standards
       : typeof user.standards === 'object' && !Array.isArray(user.standards)
@@ -103,7 +105,7 @@ export function loadSettings(home, env = process.env) {
   const schema = z.object({
     workers: z.record(z.string(), Worker).refine(w => Object.keys(w).length > 0, 'debe haber al menos un worker'),
     roles: Roles, defaults: Defaults, preferences: Preferences,
-    plugins: z.object({ notify: Notify, report: Report, present: Present, improve: Improve }),
+    plugins: z.object({ notify: Notify, report: Report, present: Present, improve: Improve, widget: Widget }),
     standards: Standards,
     providers: Providers,
   });
