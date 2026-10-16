@@ -3,6 +3,7 @@ use colmena_widget::art::{
 };
 use colmena_widget::framebuffer::{Color, FrameBuffer, pack_bgra_premultiplied};
 use colmena_widget::jobs::{Job, JobState};
+use colmena_widget::render::bee_layout;
 use colmena_widget::render::render;
 use colmena_widget::scene::{Point, Rect, Scene, WorkerPalette, place_tooltip, reconcile};
 
@@ -160,7 +161,7 @@ fn scene_states_and_worker_aliases_select_the_matching_sprite_and_scale() {
 }
 
 #[test]
-fn workers_use_their_own_palettes_and_wings_have_two_distinct_frames() {
+fn workers_use_their_own_palettes_and_wings_have_three_distinct_frames() {
     let gold = bee_sprite(WorkerPalette::Golden, BeeArtState::Flying, 0);
     let blue = bee_sprite(WorkerPalette::Blue, BeeArtState::Flying, 0);
     let green = bee_sprite(WorkerPalette::Green, BeeArtState::Flying, 0);
@@ -173,9 +174,19 @@ fn workers_use_their_own_palettes_and_wings_have_two_distinct_frames() {
         neutral.color_for('m').unwrap(),
     ];
     assert!(worker_colors.windows(2).all(|pair| pair[0] != pair[1]));
+    let worker_accents = [gold, blue, green, neutral].map(|sprite| sprite.color_for('g').unwrap());
+    assert!(worker_accents.windows(2).all(|pair| pair[0] != pair[1]));
     assert_ne!(
         bee_sprite(WorkerPalette::Golden, BeeArtState::Flying, 0).rows,
         bee_sprite(WorkerPalette::Golden, BeeArtState::Flying, 1).rows
+    );
+    assert_ne!(
+        bee_sprite(WorkerPalette::Golden, BeeArtState::Flying, 1).rows,
+        bee_sprite(WorkerPalette::Golden, BeeArtState::Flying, 2).rows
+    );
+    assert_ne!(
+        bee_sprite(WorkerPalette::Golden, BeeArtState::Flying, 0).rows,
+        bee_sprite(WorkerPalette::Golden, BeeArtState::Flying, 2).rows
     );
     assert_ne!(
         bee_sprite(WorkerPalette::Golden, BeeArtState::Idle, 0).rows,
@@ -185,6 +196,92 @@ fn workers_use_their_own_palettes_and_wings_have_two_distinct_frames() {
         bee_sprite(WorkerPalette::Golden, BeeArtState::Failed, 0).rows,
         bee_sprite(WorkerPalette::Golden, BeeArtState::Done, 0).rows
     );
+}
+
+#[test]
+fn bee_states_have_distinct_silhouettes_and_connected_striped_bodies() {
+    let states = [
+        BeeArtState::Idle,
+        BeeArtState::Queued,
+        BeeArtState::Flying,
+        BeeArtState::Returning,
+        BeeArtState::Done,
+        BeeArtState::Failed,
+    ];
+    let sprites = states.map(|state| bee_sprite(WorkerPalette::Golden, state, 0));
+    for left in 0..sprites.len() {
+        for right in left + 1..sprites.len() {
+            assert_ne!(sprites[left].rows, sprites[right].rows);
+        }
+    }
+    for sprite in sprites {
+        for row in [4, 5, 7, 8] {
+            let pixels: Vec<_> = sprite.rows[row].chars().collect();
+            assert_ne!(pixels[6], '.');
+            assert_ne!(pixels[7], '.');
+        }
+    }
+    assert!(sprites[5].rows.iter().any(|row| row.contains('x')));
+}
+
+#[test]
+fn bee_sprites_have_consistent_dimensions_and_are_horizontally_symmetric() {
+    for palette in [
+        WorkerPalette::Golden,
+        WorkerPalette::Blue,
+        WorkerPalette::Green,
+        WorkerPalette::Neutral,
+    ] {
+        for state in [
+            BeeArtState::Idle,
+            BeeArtState::Queued,
+            BeeArtState::Flying,
+            BeeArtState::Returning,
+            BeeArtState::Done,
+            BeeArtState::Failed,
+        ] {
+            for frame in 0..3 {
+                let sprite = bee_sprite(palette, state, frame);
+                assert_eq!((sprite.width(), sprite.height()), (14, 12));
+                assert!(
+                    sprite
+                        .rows
+                        .iter()
+                        .all(|row| row.chars().eq(row.chars().rev()))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn bee_layout_shows_up_to_twelve_animals_and_counts_the_rest() {
+    let bounds = Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 520.0,
+        height: 240.0,
+    };
+    for (count, visible, overflow) in [(0, 0, 0), (1, 1, 0), (5, 5, 0), (12, 12, 0), (20, 12, 8)] {
+        let jobs: Vec<_> = (0..count)
+            .map(|index| {
+                job(
+                    &format!("job-{index:02}"),
+                    JobState::Running,
+                    "luna-max",
+                    "surcar el pastizal",
+                )
+            })
+            .collect();
+        let scene = if jobs.is_empty() {
+            Scene::default()
+        } else {
+            reconcile(&Scene::default(), &jobs, 1_000, bounds)
+        };
+        let layout = bee_layout(&scene.bees);
+        assert_eq!(layout.visible.len(), visible, "count={count}");
+        assert_eq!(layout.overflow, overflow, "count={count}");
+    }
 }
 
 #[test]
@@ -270,9 +367,9 @@ fn tooltip_width_and_scene_composition_stay_within_bounds_and_repeat_exactly() {
         elapsed: "73:09".to_owned(),
         cost: "0.0000".to_owned(),
     };
-    let size = tooltip_size(&tooltip, 1);
+    let size = tooltip_size(&tooltip, 2);
     assert!(size.width >= 60 * 6 + 12);
-    assert!(size.height >= 5 * 9 + 8);
+    assert!(size.height >= 6 * 9 * 2 + 8 * 2);
 
     let scene = reconcile(
         &Scene::default(),

@@ -1,3 +1,5 @@
+use colmena_widget::app::WIDGET_SIZE;
+use colmena_widget::art::PIXEL_SCALE;
 use colmena_widget::jobs::{Job, JobState};
 use colmena_widget::platform::{Platform, PlatformError, PlatformEvent};
 use colmena_widget::position::{Position, WorkArea, load_position, save_position};
@@ -11,6 +13,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 static NEXT_HOME: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn widget_window_scales_the_scene_and_stays_within_the_desktop_footprint() {
+    assert_eq!(WIDGET_SIZE.width, 260 * PIXEL_SCALE);
+    assert_eq!(WIDGET_SIZE.height, 120 * PIXEL_SCALE);
+    assert_eq!(PIXEL_SCALE, 2);
+    assert_eq!((WIDGET_SIZE.width, WIDGET_SIZE.height), (520, 240));
+}
 
 struct HomeFixture(PathBuf);
 
@@ -126,12 +136,25 @@ fn app<R>(
 where
     R: Fn(&Path) -> std::io::Result<Vec<Job>> + Send + 'static,
 {
+    app_with_interval(home, platform, reader, clock, Duration::from_millis(20))
+}
+
+fn app_with_interval<R>(
+    home: &HomeFixture,
+    platform: FakePlatform,
+    reader: R,
+    clock: Arc<AtomicI64>,
+    interval: Duration,
+) -> WidgetApp<FakePlatform>
+where
+    R: Fn(&Path) -> std::io::Result<Vec<Job>> + Send + 'static,
+{
     WidgetApp::with_poll_interval(
         home.0.clone(),
         platform,
         reader,
         move || clock.load(Ordering::SeqCst),
-        Duration::from_millis(20),
+        interval,
     )
     .unwrap()
 }
@@ -168,7 +191,7 @@ fn initial_reader_error_keeps_empty_snapshot_and_uses_clamped_fallback_position(
 
     assert!(app.snapshot().is_empty());
     assert!(app.last_error().unwrap().contains("denied"));
-    assert_eq!(app.position(), Position { x: 666, y: 616 });
+    assert_eq!(app.position(), Position { x: 466, y: 556 });
     assert_eq!(platform.state().position, app.position());
     app.close().unwrap();
 }
@@ -226,7 +249,7 @@ fn tooltip_time_updates_on_ticks_without_reading_a_new_snapshot() {
     let clock = Arc::new(AtomicI64::new(9_000));
     let calls = Arc::new(AtomicUsize::new(0));
     let reader_calls = Arc::clone(&calls);
-    let mut app = app(
+    let mut app = app_with_interval(
         &home,
         platform.clone(),
         move |_| {
@@ -234,6 +257,7 @@ fn tooltip_time_updates_on_ticks_without_reading_a_new_snapshot() {
             Ok(vec![job("waiting", JobState::Queued)])
         },
         Arc::clone(&clock),
+        Duration::from_secs(5),
     );
     wait_for(&mut app, |app| !app.snapshot().is_empty());
     let poll_count = calls.load(Ordering::SeqCst);

@@ -6,8 +6,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-const WIDTH: u32 = 320;
-const HEIGHT: u32 = 180;
+const WIDTH: u32 = 260 * colmena_widget::art::PIXEL_SCALE;
+const HEIGHT: u32 = 120 * colmena_widget::art::PIXEL_SCALE;
 const STARTED_AT_MS: i64 = 9_000;
 const NOW_MS: i64 = 10_000;
 const BACKGROUND: [u8; 3] = [236, 228, 201];

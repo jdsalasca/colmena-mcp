@@ -15,6 +15,6 @@ fn deterministic_scene_preview_is_a_png_at_the_documented_path() {
         b"\x89PNG\r\n\x1a\n",
         "scene preview should be PNG"
     );
-    assert_eq!(u32::from_be_bytes(bytes[16..20].try_into().unwrap()), 640);
-    assert_eq!(u32::from_be_bytes(bytes[20..24].try_into().unwrap()), 180);
+    assert_eq!(u32::from_be_bytes(bytes[16..20].try_into().unwrap()), 1_040);
+    assert_eq!(u32::from_be_bytes(bytes[20..24].try_into().unwrap()), 240);
 }
