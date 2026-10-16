@@ -595,3 +595,40 @@ test('errors are returned as tool errors, not crashes', async () => {
     assert.match((await call('run', { task: 'x', cwd: tmp('luna-ng-'), isolation: 'worktree' })).error, /no es un repositorio git/);
   } finally { await client.close(); }
 });
+
+test('MC-3: cleanup purge old terminal jobs only', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    const jobsDir = path.join(home, 'jobs');
+    const day = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const seed = (id, meta) => {
+      const dir = path.join(jobsDir, id);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ id, kind: 'run', task: id, cwd: tmp('luna-mc3-cwd-'), ...meta }));
+      fs.writeFileSync(path.join(dir, 'events.jsonl'), '');
+      return dir;
+    };
+    const removed = [
+      seed('viejo-done', { state: 'done', createdAt: now - 9 * day, endedAt: now - 8 * day }),
+      seed('viejo-failed', { state: 'failed', createdAt: now - 6 * day, endedAt: now - 5 * day }),
+      seed('viejo-sin-ended', { state: 'cancelled', createdAt: now - 7 * day }),
+    ];
+    const kept = [
+      seed('largo-reciente', { state: 'done', createdAt: now - 10 * day, endedAt: now - day / 2 }),
+      seed('reciente', { state: 'done', createdAt: now - day, endedAt: now - day / 2 }),
+      seed('en-curso', { state: 'running', createdAt: now - 10 * day }),
+      seed('en-cola', { state: 'queued', createdAt: now - 10 * day }),
+    ];
+
+    const res = await call('cleanup', { older_than_days: 3, force: true });
+    assert.deepEqual(res.jobsRemoved.sort(), ['viejo-done', 'viejo-failed', 'viejo-sin-ended']);
+    for (const dir of removed) assert.equal(fs.existsSync(dir), false, dir);
+    for (const dir of kept) assert.equal(fs.existsSync(dir), true, dir);
+    const listed = await call('list', { limit: 50 });
+    assert.equal(listed.some(job => job.id.startsWith('viejo')), false);
+    assert.equal((await call('stats', { since_days: 30 })).totals.jobs, 4);
+    assert.deepEqual((await call('cleanup', { older_than_days: 3, force: true })).jobsRemoved, []);
+  } finally { await client.close(); }
+});
