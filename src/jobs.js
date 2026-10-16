@@ -9,11 +9,12 @@ import { createLedger } from './ledger.js';
 import { chooseWorker, workerStatus } from './router.js';
 import { buildPrompt, parseReport } from './report.js';
 import * as iso from './isolation.js';
+import { writeFileAtomic } from './atomic-write.js';
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
 const alive = pid => { if (!pid) return false; try { process.kill(pid, 0); return true; } catch { return false; } };
 
-export function createJobManager(config, { bus = new EventEmitter() } = {}) {
+export function createJobManager(config, { bus = new EventEmitter(), writeArtifact = writeFileAtomic } = {}) {
   const store = createStore(config);
   const ledger = createLedger(config);
 
@@ -135,14 +136,14 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     live.delete(id);
     const dir = store.jobDir(id);
     let text = lastMessage(id);
-    if (text == null && lastText) { text = lastText; fs.writeFileSync(path.join(dir, 'last_message.md'), text); }
+    if (text == null && lastText) { text = lastText; writeArtifact(path.join(dir, 'last_message.md'), text); }
     let patch = { endedAt: Date.now(), usage };
     if (state.cancelled) patch.state = 'cancelled';
     else if (state.finishedByGrace) Object.assign(patch, { state: 'done', finishedByGrace: true, message: state.message });
     else if (state.timedOut) Object.assign(patch, { state: 'failed', error: `timeout tras ${timeoutMin} min` });
     else if (r.code === 0) patch.state = 'done';
     else Object.assign(patch, { state: 'failed', error: `codex salió con código ${r.code}: ${r.stderrTail}`.slice(0, 1500) });
-    if (patch.state === 'done' && meta.kind === 'compact' && meta.parentId && text) fs.writeFileSync(path.join(store.jobDir(meta.parentId), 'summary.md'), text);
+    if (patch.state === 'done' && meta.kind === 'compact' && meta.parentId && text) writeArtifact(path.join(store.jobDir(meta.parentId), 'summary.md'), text);
     if (meta.kind === 'run' && !meta.readonly) {
       try { const ch = iso.changes(meta.workdir, meta.base); patch.files = ch.files; patch.diffstat = ch.diffstat; } catch {}
     }

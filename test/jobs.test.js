@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { getConfig } from '../src/config.js';
 import { createJobManager } from '../src/jobs.js';
+import { writeFileAtomic } from '../src/atomic-write.js';
 
 const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-codex.js');
 const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
@@ -242,6 +243,44 @@ test('explicit worker reaches the adapter; continue reuses it; summarize uses ro
     assert.equal(calls[1].argv[calls[1].argv.indexOf('-m') + 1], 'gpt-alt');
     assert.equal(calls[2].argv[calls[2].argv.indexOf('-m') + 1], 'gpt-6-luna');
   } finally { delete process.env.FAKE_LOG; }
+});
+test('artifact writes go through writeFileAtomic: rename failure keeps previous file and cleans temp', async () => {
+  const config = getConfig(baseEnv(codexOnlyHome(), {}));
+  const calls = [];
+  const jm = createJobManager(config, {
+    writeArtifact: (file, data) => {
+      calls.push(path.basename(file));
+      try {
+        return writeFileAtomic(file, data, { renameSync: () => { throw new Error('rename falló'); } });
+      } catch { return null; }
+    },
+  });
+  const parent = jm.submit(S('padre'));
+  await jm.wait([parent]);
+  const parentDir = jm.jobDir(parent);
+  fs.writeFileSync(path.join(parentDir, 'summary.md'), 'previo');
+  const compactId = jm.compact(parent);
+  await jm.wait([compactId], { timeoutS: 30 });
+  assert.ok(calls.includes('summary.md'));
+  assert.equal(fs.readFileSync(path.join(parentDir, 'summary.md'), 'utf8'), 'previo');
+  assert.ok(fs.readdirSync(parentDir).every(f => !f.includes('.tmp')));
+  assert.equal(jm.result(compactId).state, 'done');
+});
+test('compact job publishes summary.md and last_message.md complete, without temp files', async () => {
+  const { jm } = mk();
+  const parent = jm.submit(S('padre'));
+  await jm.wait([parent]);
+  const compactId = jm.compact(parent);
+  await jm.wait([compactId]);
+  const parentDir = jm.jobDir(parent);
+  const compactDir = jm.jobDir(compactId);
+  const summary = fs.readFileSync(path.join(parentDir, 'summary.md'), 'utf8');
+  const lastMessage = fs.readFileSync(path.join(compactDir, 'last_message.md'), 'utf8');
+  assert.equal(summary, lastMessage);
+  assert.match(summary, /RESULT: ok/);
+  assert.ok(fs.readdirSync(parentDir).every(f => !f.includes('.tmp')));
+  assert.ok(fs.readdirSync(compactDir).every(f => !f.includes('.tmp')));
+  assert.equal(jm.result(compactId).state, 'done');
 });
 test('job.started / job.finished events on the bus', async () => {
   const { jm } = mk(); const seen = [];
