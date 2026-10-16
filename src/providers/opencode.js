@@ -19,6 +19,7 @@ function parseLine(line) {
 export const opencodeAdapter = {
   id: 'opencode',
   parseLine,
+  completesOn: () => false,
   cmd: config => config.opencode,
   env(config) {
     const provider = config.settings.providers.opencode;

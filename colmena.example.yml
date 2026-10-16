@@ -51,6 +51,7 @@ defaults:
   worker: luna-max
   max_parallel: 4
   timeout_min: 60
+  exit_grace_s: 20  # tras entrega final de Codex, espera antes de matar el proceso colgado
 
 plugins:
   notify:

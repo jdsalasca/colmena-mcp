@@ -38,6 +38,9 @@ test('opencode parseLine: session, text, usage with cost, garbage', () => {
   assert.equal(parseLine('nope').kind, 'other');
   assert.equal(parseLine('{"type":"tool_use"}').kind, 'other');
 });
+test('OpenCode step_finish is not a reliable end-of-turn signal', () => {
+  assert.equal(oc.completesOn(oc.parseLine('{"type":"step_finish","part":{"tokens":{}}}')), false);
+});
 test('opencode env isolates config by default and creates the selected config directory', () => {
   const home = tmp('colmena-oc-env-');
   const isolatedPath = path.join(home, 'opencode-config');
@@ -143,6 +146,14 @@ test('opencode failure keeps stderr; cancel kills it', async () => {
   await new Promise(r => setTimeout(r, 500));
   await jm.cancel(s); await jm.wait([s], { timeoutS: 20 });
   assert.equal(jm.status(s).state, 'cancelled');
+});
+test('OpenCode job with a finished step still follows general timeout', async () => {
+  const config = getConfig({ ...baseEnv(ocHome(), { COLMENA_JOB_TIMEOUT_MIN: '0.02', COLMENA_EXIT_GRACE_S: '0.1' }), COLMENA_OPENCODE_BIN: fakeOpencode });
+  const jm = createJobManager(config);
+  const id = jm.submit(S('LINGER', { worker: 'ds-flash' }));
+  await jm.wait([id], { timeoutS: 10 });
+  assert.equal(jm.result(id).state, 'failed');
+  assert.match(jm.result(id).error, /timeout/i);
 });
 test('sessionId repetido escribe meta.json una sola vez (dedupe)', async () => {
   const dir = tmp('colmena-oc-dedupe-');

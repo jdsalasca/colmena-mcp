@@ -25,4 +25,5 @@ else setTimeout(() => {
   emit({ type: 'step_finish', sessionID: session, part: { type: 'step-finish', tokens: { input: 1000, output: 10, reasoning: 5 }, cost: 0.01 } });
   emit({ type: 'text', sessionID: session, part: { type: 'text', text: `RESULT: ok oc (${session})\nFILES: ${files}\nTESTS: 1/1\nRISKS: ninguno` } });
   emit({ type: 'step_finish', sessionID: session, part: { type: 'step-finish', tokens: { input: 500, output: 20, reasoning: 0 }, cost: 0.01 } });
+  if (prompt.includes('LINGER')) setTimeout(() => {}, 600000);
 }, Number(process.env.FAKE_DELAY || 0));

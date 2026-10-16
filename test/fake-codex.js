@@ -37,4 +37,5 @@ else setTimeout(() => {
   emit({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text } });
   emit({ type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 5 } });
   if (out) fs.writeFileSync(out, text);
+  if (prompt.includes('LINGER')) setTimeout(() => {}, 600000);
 }, Number(process.env.FAKE_DELAY || 0));
