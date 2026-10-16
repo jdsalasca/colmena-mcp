@@ -67,6 +67,7 @@ plugins:
     enabled: true
     on: [start, finish, fail]
     heartbeat_min: 10
+    budget_pct: 80     # avisa (una vez por cruce) cuando spent+reserved de un worker con budget llega a este %; 0 lo desactiva
   report:
     enabled: true
     default_style: papercraft
