@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { buildImprovePrompt, pendingFocuses } from '../src/plugins/improve.js';
+import { buildImprovePrompt, pendingFocuses, hasRecentImprove } from '../src/plugins/improve.js';
 import { baseEnv, tmp } from './helpers.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -80,6 +80,14 @@ test('pendingFocuses: descuenta los foci lanzados en la ventana, por cwd', () =>
   if (process.platform === 'win32') {
     assert.deepEqual(pendingFocuses([meta({ cwd: 'C:\\REPO' })], { cwd: 'c:\\repo', now }), ['backlog', 'features']);
   }
+});
+
+test('hasRecentImprove ignora jobs con createdAt futuro', () => {
+  const now = Date.parse('2026-10-15T12:00:00Z');
+  const meta = { id: 'future', improveFocus: 'debt', cwd: 'C:\\repo', createdAt: now + 1000 };
+  const jm = { list: () => [{ id: meta.id }], meta: () => meta };
+
+  assert.equal(hasRecentImprove(jm, meta.cwd, { now }), false);
 });
 
 test('improve: lanza en worktree con el worker de docs y el prompt esperado (y worker explícito)', async () => {

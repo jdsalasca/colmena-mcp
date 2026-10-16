@@ -5,6 +5,7 @@ import path from 'node:path';
 import { getConfig } from '../src/config.js';
 import { createJobManager } from '../src/jobs.js';
 import { generateReport, buildReportData, renderFallback, listStyles } from '../src/plugins/report.js';
+import { computeStats } from '../src/stats.js';
 import { baseEnv, codexOnlyHome, tmp } from './helpers.js';
 
 const S = (task, extra = {}) => ({ task, cwd: tmp('colmena-c-'), isolation: 'inplace', ...extra });
@@ -28,6 +29,22 @@ test('buildReportData: jobs, totals, report sections', async () => {
   assert.match(d.jobs[0].report.RESULT, /^ok/);
   assert.equal(d.jobs[0].worker, 'luna-max');
   assert.ok(d.jobs[1].error);
+});
+
+test('stats y reporte comparten duración y costo redondeados por job', async () => {
+  const { jm, ids } = await setup();
+  const durationsMs = [1500, 2400];
+  const costsUsd = [0.123456, 0.456789];
+  ids.forEach((id, index) => jm.mark(id, {
+    startedAt: 1000,
+    endedAt: 1000 + durationsMs[index],
+    costUsd: costsUsd[index],
+  }));
+
+  const stats = computeStats(jm.metas(), { sinceMs: 0, now: Date.now() });
+  const report = buildReportData(jm, ids);
+  assert.equal(report.totals.durationS, stats.totals.durationS);
+  assert.equal(report.totals.costUsd, stats.totals.costUsd);
 });
 test('non-terminal job → error', async () => {
   const config = getConfig(baseEnv(codexOnlyHome())); const jm = createJobManager(config);

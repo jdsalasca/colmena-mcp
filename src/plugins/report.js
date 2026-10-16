@@ -3,6 +3,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { improveNext } from './improve.js';
+import { jobMetrics } from '../job-metrics.js';
 
 const BUILTIN_STYLES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'styles');
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
@@ -37,8 +38,8 @@ export function buildReportData(jm, ids, { title = 'Informe de Colmena', subtitl
     const m = jm.meta(id);
     if (!TERMINAL.has(m.state)) throw new Error(`job ${id} sigue ${m.state}; espera a que termine antes de generar el reporte`);
     const r = jm.result(id, { detail: 'normal' });
-    const durationS = m.startedAt && m.endedAt ? Math.round((m.endedAt - m.startedAt) / 1000) : 0;
-    return { id, worker: m.worker, task: m.task, state: m.state, report: r.report ?? null, text: r.text ?? null, files: m.files ?? [], diffstat: m.diffstat ?? '', cost_usd: r.cost_usd ?? 0, durationS, branch: m.branch ?? null, error: m.error ?? null };
+    const { durationS, costUsd } = jobMetrics(m);
+    return { id, worker: m.worker, task: m.task, state: m.state, report: r.report ?? null, text: r.text ?? null, files: m.files ?? [], diffstat: m.diffstat ?? '', cost_usd: costUsd, durationS, branch: m.branch ?? null, error: m.error ?? null };
   });
   const done = jobs.filter(j => j.state === 'done').length;
   const failed = jobs.filter(j => j.state === 'failed' || j.state === 'orphaned').length;
