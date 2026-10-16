@@ -1,0 +1,29 @@
+// Verified against opencode 1.18.30: `run --format json` emits step_start{sessionID}, text{part.text}, step_finish{part.tokens, part.cost}.
+function parseLine(line) {
+  let o;
+  try { o = JSON.parse(line); } catch { return { kind: 'other' }; }
+  if (o?.type === 'step_start' && o.sessionID) return { kind: 'session', sessionId: o.sessionID };
+  if (o?.type === 'text' && typeof o.part?.text === 'string') return { kind: 'message', text: o.part.text };
+  if (o?.type === 'step_finish' && o.part) {
+    const t = o.part.tokens ?? {};
+    const usage = { input_tokens: t.input ?? 0, output_tokens: t.output ?? 0, reasoning_tokens: t.reasoning ?? 0 };
+    if (typeof o.part.cost === 'number') usage.cost_usd = o.part.cost;
+    return { kind: 'usage', usage };
+  }
+  return { kind: 'other' };
+}
+
+export const opencodeAdapter = {
+  id: 'opencode',
+  parseLine,
+  cmd: config => config.opencode,
+  // --agent plan is OpenCode's read-only agent (verified: it refuses to write files even with --auto).
+  buildArgs({ prompt, workdir, readonly = false, resumeSessionId, worker }) {
+    const a = ['run', '--format', 'json', '--pure', '--auto', '-m', worker.model];
+    if (worker.effort) a.push('--variant', worker.effort);
+    if (readonly) a.push('--agent', 'plan');
+    if (resumeSessionId) a.push('-s', resumeSessionId);
+    a.push('--dir', workdir, prompt);
+    return a;
+  },
+};

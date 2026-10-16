@@ -1,6 +1,7 @@
 import { codexAdapter } from './codex.js';
+import { opencodeAdapter } from './opencode.js';
 
-const adapters = { codex: codexAdapter };
+const adapters = { codex: codexAdapter, opencode: opencodeAdapter };
 
 export function registerAdapter(adapter) { adapters[adapter.id] = adapter; }
 

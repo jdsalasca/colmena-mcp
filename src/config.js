@@ -20,6 +20,17 @@ function newestCodex() {
   return found[0]?.p ?? 'codex';
 }
 
+// opencode is an npm shim (.cmd/.ps1) on Windows, which can't take arbitrary args safely; find the real exe next to it.
+export function findOpencode(pathEnv = process.env.PATH ?? '') {
+  for (const dir of pathEnv.split(path.delimiter).filter(Boolean)) {
+    const real = path.join(dir, 'node_modules', 'opencode-ai', 'bin', 'opencode.exe');
+    if (fs.existsSync(real)) return real;
+    const direct = path.join(dir, 'opencode.exe');
+    if (fs.existsSync(direct)) return direct;
+  }
+  return 'opencode';
+}
+
 // A .js path (test fakes) runs through node; anything else is spawned as-is.
 export function resolveCmd(binPath) {
   return /\.(m?js|cjs)$/i.test(binPath) ? { bin: process.execPath, prefixArgs: [binPath] } : { bin: binPath, prefixArgs: [] };
@@ -41,7 +52,7 @@ export function getConfig(env = process.env) {
     maxParallel: Number(e('MAX_PARALLEL')) || settings.defaults.max_parallel,
     timeoutMin: Number(e('JOB_TIMEOUT_MIN')) || settings.defaults.timeout_min,
     codex: resolveCmd(e('CODEX_BIN') || newestCodex()),
-    opencode: resolveCmd(e('OPENCODE_BIN') || 'opencode'),
+    opencode: resolveCmd(e('OPENCODE_BIN') || findOpencode()),
     notifier: e('NOTIFIER') || 'toast',
   };
 }
