@@ -18,7 +18,7 @@ function repo() {
   fs.writeFileSync(path.join(d, 'a.txt'), 'a\n'); git(d, 'add', '-A'); git(d, 'commit', '-qm', 'i');
   return d;
 }
-import { baseEnv, codexOnlyHome, until } from './helpers.js';
+import { baseEnv, codexOnlyHome, fakeOpencode, until } from './helpers.js';
 const mk = (env = {}) => {
   const config = getConfig(baseEnv(codexOnlyHome(), env));
   return { jm: createJobManager(config), config };
@@ -505,4 +505,116 @@ test('MC-3: el vencimiento deja continuar esperando hasta el reporte', async () 
     assert.equal(second.done.length, 1);
     assert.equal(second.done[0].state, 'done');
   } finally { delete process.env.FAKE_DELAY; }
+});
+
+function retryHome() {
+  const home = tmp('luna-retry-home-');
+  fs.writeFileSync(path.join(home, 'colmena.yml'), `
+workers:
+  oc: {provider: opencode, model: fake-oc, priority: 1}
+roles: {reporter: oc, summarizer: oc, reviewer: oc}
+defaults: {worker: oc, retry_transient: 0}
+plugins: {notify: {enabled: false}}
+`);
+  return home;
+}
+const mc4 = (env = {}) => createJobManager(getConfig({ ...baseEnv(retryHome(), env), COLMENA_OPENCODE_BIN: fakeOpencode }));
+
+test('MC-4: un job fallido se relanza con retry y termina done con el brief original íntegro', async () => {
+  const log = path.join(tmp('luna-retry-log-'), 'fake.log'); process.env.FAKE_LOG = log;
+  try {
+    const jm = mc4();
+    const brief = 'ERROR_ONCE arregla la regresión:\n' + 'detalle importante '.repeat(25);
+    const id = jm.submit(S(brief));
+    await jm.wait([id], { timeoutS: 30 });
+    assert.equal(jm.result(id).state, 'failed');
+    const saved = fs.readFileSync(path.join(jm.jobDir(id), 'brief.md'), 'utf8');
+    assert.ok(saved.includes(brief));
+
+    const id2 = jm.retry(id);
+    assert.equal(jm.meta(id2).parentId, id);
+    await jm.wait([id2], { timeoutS: 30 });
+    assert.equal(jm.result(id2).state, 'done');
+    const calls = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(calls.at(-1).prompt, saved, 'el argv debe llevar el brief original completo, no el recorte de 300');
+  } finally { delete process.env.FAKE_LOG; }
+});
+
+test('MC-4: retry con task relanza un job fallido y ejecuta el brief nuevo completo', async () => {
+  const log = path.join(tmp('luna-retry-task-'), 'fake.log'); process.env.FAKE_LOG = log;
+  try {
+    const { jm } = mk();
+    const failed = jm.submit(S('FAIL ' + 'revisa el bug '.repeat(30)));
+    await jm.wait([failed]);
+    assert.equal(jm.result(failed).state, 'failed');
+    const corrected = 'arregla sin fallar: ' + 'revisa el bug '.repeat(30);
+    const id2 = jm.retry(failed, corrected);
+    assert.equal(jm.meta(id2).parentId, failed);
+    await jm.wait([id2]);
+    assert.equal(jm.result(id2).state, 'done');
+    const calls = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.ok(calls.at(-1).prompt.includes(corrected), 'el task nuevo debe llegar íntegro al argv');
+    assert.equal(jm.list({}).filter(job => job.id === id2).length, 1);
+  } finally { delete process.env.FAKE_LOG; }
+});
+
+test('MC-4: retry rechaza jobs vivos y jobs sin brief.md, sin duplicar jobs', async () => {
+  const { jm } = mk();
+  assert.throws(() => jm.retry('nope'), /no existe/);
+  const running = jm.submit(S('SLEEP'));
+  assert.ok(['queued', 'running'].includes(jm.status(running).state));
+  const before = jm.list({}).length;
+  assert.throws(() => jm.retry(running), /sigue queued|sigue running/);
+  assert.equal(jm.list({}).length, before);
+  await jm.cancel(running); await jm.wait([running], { timeoutS: 20 });
+
+  const done = jm.submit(S('hola')); await jm.wait([done]);
+  fs.rmSync(path.join(jm.jobDir(done), 'brief.md'));
+  assert.throws(() => jm.retry(done), /brief\.md/);
+  const retried = jm.retry(done, 'hola de nuevo');
+  await jm.wait([retried]);
+  assert.equal(jm.result(retried).state, 'done');
+});
+
+test('MC-4: retry reutiliza cwd, worktree, rama y base del job original', async () => {
+  const { jm } = mk(); const cwd = repo();
+  const id = jm.submit({ task: 'FAIL en worktree', cwd, isolation: 'worktree' });
+  await jm.wait([id]);
+  assert.equal(jm.result(id).state, 'failed');
+  const id2 = jm.retry(id, 'corrige en el mismo worktree');
+  await jm.wait([id2]);
+  assert.equal(jm.result(id2).state, 'done');
+  const a = jm.meta(id); const b = jm.meta(id2);
+  assert.equal(b.cwd, a.cwd);
+  assert.equal(b.workdir, a.workdir);
+  assert.equal(b.branch, a.branch);
+  assert.equal(b.base, a.base);
+  assert.equal(b.isolation, 'reuse');
+  assert.equal(b.parentId, id);
+});
+
+test('MC-4: retry pasa por submit y reserva presupuesto como cualquier job', async () => {
+  const { jm, config } = mk();
+  config.settings.workers['luna-max'].budget = { monthly_usd: 5 };
+  config.settings.workers['luna-max'].reserve_usd = 0.25;
+  const id = jm.submit(S('FAIL reserva')); await jm.wait([id]);
+  assert.equal(jm.result(id).state, 'failed');
+  const id2 = jm.retry(id, 'hola con reserva');
+  assert.equal(jm.meta(id2).reservedUsd, 0.25);
+  await jm.wait([id2]);
+  assert.equal(jm.result(id2).state, 'done');
+});
+
+test('MC-4: brief.md se publica con writeArtifact y sobrevive al arranque del job', async () => {
+  const config = getConfig(baseEnv(codexOnlyHome()));
+  const calls = [];
+  const jm = createJobManager(config, {
+    writeArtifact: (file, data) => { calls.push(path.basename(file)); return writeFileAtomic(file, data); },
+  });
+  const id = jm.submit(S('hola ' + 'z'.repeat(350)));
+  assert.ok(calls.includes('brief.md'), 'brief.md debe publicarse con el writeArtifact inyectado');
+  await jm.wait([id]);
+  const brief = fs.readFileSync(path.join(jm.jobDir(id), 'brief.md'), 'utf8');
+  assert.ok(brief.includes('z'.repeat(350)));
+  assert.equal(fs.existsSync(path.join(jm.jobDir(id), 'prompt.txt')), false);
 });

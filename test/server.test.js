@@ -42,7 +42,7 @@ async function connect(extraEnv = {}) {
   return { client, call };
 }
 
-const NAMES = ['workers', 'preferences', 'report', 'present', 'reload_config', 'stats', 'improve', 'widget', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'verdict', 'cancel', 'merge', 'cleanup'];
+const NAMES = ['workers', 'preferences', 'report', 'present', 'reload_config', 'stats', 'improve', 'widget', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'retry', 'summarize', 'compact', 'handoff', 'review', 'verdict', 'cancel', 'merge', 'cleanup'];
 
 function providerHome({ codexEnabled = true } = {}) {
   const home = tmp('colmena-pref-');
@@ -587,6 +587,37 @@ test('MC-3: wait valida timeout_s entre 1 y 1800 sin cancelar al vencer', async 
     await call('cancel', { job_id: slow.job_id });
   } finally { await client.close(); }
 });
+test('MC-4: retry MCP relanza un job fallido con su brief y rechaza los vivos', async () => {
+  const home = codexOnlyHome();
+  const log = path.join(tmp('luna-retry-mcp-'), 'fake.log');
+  const { client, call } = await connect({ COLMENA_HOME: home, FAKE_LOG: log });
+  try {
+    const failed = await call('run', { task: 'FAIL ronda mcp', cwd: tmp('luna-retry-mcp-c-'), isolation: 'inplace', wait: true });
+    assert.equal(failed.state, 'failed');
+    assert.match((await call('retry', { job_id: 'nope' })).error, /no existe/);
+
+    const brief = 'corrige la ronda: ' + 'detalle '.repeat(50);
+    const retried = await call('retry', { job_id: failed.id, task: brief });
+    const done = await call('wait', { job_ids: [retried.job_id], timeout_s: 60 });
+    assert.equal(done.done[0].state, 'done');
+    const meta = JSON.parse(fs.readFileSync(path.join(home, 'jobs', retried.job_id, 'meta.json'), 'utf8'));
+    assert.equal(meta.parentId, failed.id);
+    assert.ok((await call('list', {})).some(job => job.id === retried.job_id));
+    const prompt = JSON.parse(fs.readFileSync(log, 'utf8').trim().split('\n').at(-1)).prompt;
+    assert.ok(prompt.includes(brief));
+
+    const saved = await call('retry', { job_id: retried.job_id });
+    const again = await call('wait', { job_ids: [saved.job_id], timeout_s: 60 });
+    assert.equal(again.done[0].state, 'done');
+    const prompt2 = JSON.parse(fs.readFileSync(log, 'utf8').trim().split('\n').at(-1)).prompt;
+    assert.equal(prompt2, fs.readFileSync(path.join(home, 'jobs', retried.job_id, 'brief.md'), 'utf8'));
+
+    const live = await call('run', { task: 'SLEEP mcp', cwd: tmp('luna-retry-live-'), isolation: 'inplace' });
+    assert.match((await call('retry', { job_id: live.job_id })).error, /sigue/);
+    await call('cancel', { job_id: live.job_id });
+  } finally { await client.close(); }
+});
+
 test('errors are returned as tool errors, not crashes', async () => {
   const { client, call } = await connect();
   try {
