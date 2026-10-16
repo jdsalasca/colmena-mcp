@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 export const here = path.dirname(fileURLToPath(import.meta.url));
 export const fakeCodex = path.join(here, 'fake-codex.js');
 export const fakeOpencode = path.join(here, 'fake-opencode.js');
-export const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
+export const tmp = p => fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), p))); // canonical path: CI temp dirs use 8.3 short names (RUNNER~1)
 
 export async function until(predicate, message = 'condition should become true', timeoutMs = 3000) {
   const deadline = Date.now() + timeoutMs;

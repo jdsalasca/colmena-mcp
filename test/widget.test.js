@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createWidgetController, resolveWidgetExecutable } from '../src/plugins/widget.js';
 
-const tmp = prefix => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+const tmp = prefix => fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix))); // canonical: the controller compares real paths (CI temp dirs use 8.3 short names)
 const registryPath = home => path.join(home, 'widget-process.json');
 const publish = (home, pid, executable) => fs.writeFileSync(registryPath(home), JSON.stringify({ pid, executable }));
 const tick = ms => new Promise(resolve => setTimeout(resolve, ms));
