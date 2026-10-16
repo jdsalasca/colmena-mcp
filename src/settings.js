@@ -30,6 +30,9 @@ const Notify = z.object({
 });
 const Report = z.object({ enabled: z.boolean().default(true), default_style: z.string().default('papercraft') });
 const Standards = z.object({ enabled: z.boolean().default(true), preamble: z.string().min(1).default(DEFAULT_STANDARDS_PREAMBLE) });
+const Providers = z.object({
+  opencode: z.object({ isolate_config: z.boolean().default(true), config_dir: z.string().min(1).optional() }),
+});
 
 export const DEFAULT_SETTINGS = {
   workers: {
@@ -43,6 +46,7 @@ export const DEFAULT_SETTINGS = {
   defaults: { worker: 'luna-max', max_parallel: 4, timeout_min: 60 },
   plugins: { notify: {}, report: {} },
   standards: { enabled: true, preamble: DEFAULT_STANDARDS_PREAMBLE },
+  providers: { opencode: { isolate_config: true } },
 };
 
 const fmt = err => err.issues.map(i => `${i.path.join('.') || '(raíz)'}: ${i.message}`).join('; ');
@@ -66,12 +70,24 @@ export function loadSettings(home, env = process.env) {
       : typeof user.standards === 'object' && !Array.isArray(user.standards)
         ? { ...DEFAULT_SETTINGS.standards, ...user.standards }
         : user.standards,
+    providers: user.providers == null ? DEFAULT_SETTINGS.providers
+      : typeof user.providers === 'object' && !Array.isArray(user.providers)
+        ? {
+            ...DEFAULT_SETTINGS.providers,
+            ...user.providers,
+            opencode: user.providers.opencode == null ? DEFAULT_SETTINGS.providers.opencode
+              : typeof user.providers.opencode === 'object' && !Array.isArray(user.providers.opencode)
+                ? { ...DEFAULT_SETTINGS.providers.opencode, ...user.providers.opencode }
+                : user.providers.opencode,
+          }
+        : user.providers,
   };
   const schema = z.object({
     workers: z.record(z.string(), Worker).refine(w => Object.keys(w).length > 0, 'debe haber al menos un worker'),
     roles: Roles, defaults: Defaults,
     plugins: z.object({ notify: Notify, report: Report }),
     standards: Standards,
+    providers: Providers,
   });
   const r = schema.safeParse(merged);
   if (!r.success) throw new Error(`colmena.yml inválido (${file}): ${fmt(r.error)}`);

@@ -8,7 +8,9 @@ const prompt = argv[argv.length - 1];
 const dir = val('--dir') || process.cwd();
 const session = val('-s') || 'ses_' + Math.random().toString(16).slice(2, 8);
 const agent = val('--agent');
-if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ argv, dir, prompt }) + '\n');
+if (process.env.FAKE_LOG) {
+  fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ argv, dir, prompt, xdgConfigHome: process.env.XDG_CONFIG_HOME }) + '\n');
+}
 
 const emit = o => process.stdout.write(JSON.stringify(o) + '\n');
 emit({ type: 'step_start', sessionID: session, part: { type: 'step-start' } });

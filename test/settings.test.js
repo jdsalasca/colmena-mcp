@@ -30,6 +30,7 @@ test('no yml → defaults', () => {
   assert.match(s.standards.preamble, /red.*green.*refactor/i);
   assert.match(s.standards.preamble, /DRY/);
   assert.match(s.standards.preamble, /evidencia/i);
+  assert.deepEqual(s.providers, { opencode: { isolate_config: true } });
   assert.deepEqual(DEFAULT_SETTINGS.defaults.max_parallel, 4);
 });
 test('yml replaces workers, merges sections', () => {
@@ -84,6 +85,20 @@ test('invalid standards identify the field', () => {
   assert.throws(() => loadSettings(h, env), /standards\.enabled|standards\.preamble/);
   const scalar = withYml('standards: texto\n');
   assert.throws(() => loadSettings(scalar.h, scalar.env), /standards/);
+});
+test('OpenCode config isolation defaults on and supports a custom directory', () => {
+  const { h, env } = withYml("providers:\n  opencode: {isolate_config: true, config_dir: 'C:/custom/opencode'}\n");
+  assert.deepEqual(loadSettings(h, env).providers, {
+    opencode: { isolate_config: true, config_dir: 'C:/custom/opencode' },
+  });
+  const disabled = withYml('providers: {opencode: {isolate_config: false}}\n');
+  assert.deepEqual(loadSettings(disabled.h, disabled.env).providers, { opencode: { isolate_config: false } });
+});
+test('invalid OpenCode provider settings identify the field', () => {
+  const isolate = withYml('providers: {opencode: {isolate_config: "yes"}}\n');
+  assert.throws(() => loadSettings(isolate.h, isolate.env), /providers\.opencode\.isolate_config/);
+  const directory = withYml('providers: {opencode: {config_dir: 7}}\n');
+  assert.throws(() => loadSettings(directory.h, directory.env), /providers\.opencode\.config_dir/);
 });
 test('config: COLMENA_* beats LUNA_*, settings attached, default home', () => {
   const c = getConfig({ COLMENA_HOME: 'C:\\a', LUNA_HOME: 'C:\\b', COLMENA_CODEX_BIN: 'x.js' });

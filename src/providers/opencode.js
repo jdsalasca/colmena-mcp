@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 // Verified against opencode 1.18.30: `run --format json` emits step_start{sessionID}, text{part.text}, step_finish{part.tokens, part.cost}.
 function parseLine(line) {
   let o;
@@ -17,6 +20,13 @@ export const opencodeAdapter = {
   id: 'opencode',
   parseLine,
   cmd: config => config.opencode,
+  env(config) {
+    const provider = config.settings.providers.opencode;
+    if (!provider.isolate_config) return undefined;
+    const configDir = path.resolve(config.home, provider.config_dir ?? 'opencode-config');
+    fs.mkdirSync(configDir, { recursive: true });
+    return { XDG_CONFIG_HOME: configDir };
+  },
   // --agent plan is OpenCode's read-only agent (verified: it refuses to write files even with --auto).
   buildArgs({ prompt, workdir, readonly = false, resumeSessionId, worker }) {
     const a = ['run', '--format', 'json', '--pure', '--auto', '-m', worker.model];

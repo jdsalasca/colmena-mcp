@@ -35,6 +35,7 @@ function settingsDiff(before, after) {
       .filter(worker => worker.fields.length),
     roles: changedFields(before.roles, after.roles),
     defaults: changedFields(before.defaults, after.defaults),
+    providers: changedFields(before.providers, after.providers),
   };
 }
 
