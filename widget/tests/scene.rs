@@ -297,6 +297,25 @@ fn equal_inputs_produce_equal_routes_and_flying_bees_move_deterministically() {
 }
 
 #[test]
+fn running_bees_follow_an_eight_shaped_flight_path_above_the_meadow() {
+    let bounds = rect();
+    let scene = reconcile(
+        &Scene::default(),
+        &[job("figure-eight", JobState::Running)],
+        1_000,
+        bounds,
+    );
+    let bee = scene.bees.iter().find(|bee| bee.job.is_some()).unwrap();
+
+    assert_eq!(bee.route.len(), 9);
+    let center = bounds.width / 2.0;
+    assert!(bee.route.iter().filter(|point| point.x == center).count() >= 2);
+    assert!(bee.route.iter().any(|point| point.x > center + 20.0));
+    assert!(bee.route.iter().any(|point| point.x < center - 20.0));
+    assert!(bee.route.iter().all(|point| point.y < bounds.height * 0.69));
+}
+
+#[test]
 fn hit_test_tie_breaking_is_deterministic_and_idle_is_ignored() {
     let mut scene = reconcile(
         &Scene::default(),

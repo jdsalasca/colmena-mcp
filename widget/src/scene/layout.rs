@@ -297,10 +297,14 @@ fn queued_position(index: usize, bounds: Rect, radius: f32) -> Point {
 
 fn flight_route(bounds: Rect, phase: u8, radius: f32) -> Vec<Point> {
     let anchors = [
-        Point { x: 0.16, y: 0.53 },
-        Point { x: 0.36, y: 0.37 },
-        Point { x: 0.63, y: 0.49 },
-        Point { x: 0.83, y: 0.32 },
+        Point { x: 0.5, y: 0.43 },
+        Point { x: 0.71, y: 0.58 },
+        Point { x: 0.82, y: 0.43 },
+        Point { x: 0.71, y: 0.28 },
+        Point { x: 0.5, y: 0.43 },
+        Point { x: 0.29, y: 0.58 },
+        Point { x: 0.18, y: 0.43 },
+        Point { x: 0.29, y: 0.28 },
     ];
     let offset = usize::from(phase) % anchors.len();
     let mut route: Vec<_> = (0..anchors.len())
@@ -324,14 +328,14 @@ fn stable_phase(id: &str) -> u8 {
     id.bytes().fold(0x811c_9dc5_u32, |hash, byte| {
         (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
     }) as u8
-        % 4
+        % 8
 }
 
 fn hive_entrance(bounds: Rect) -> Point {
     clamp_point(
         Point {
             x: bounds.x + bounds.width / 2.0,
-            y: bounds.y + bounds.height * 0.72,
+            y: bounds.y + bounds.height * 0.66,
         },
         bounds,
         0.0,

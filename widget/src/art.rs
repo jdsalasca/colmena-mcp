@@ -4,6 +4,7 @@ use crate::position::Size;
 use crate::scene::{Bee, Motion, Tooltip, WorkerPalette, style_for_worker};
 
 const TRANSPARENT: Color = Color::rgba(0, 0, 0, 0);
+pub const PIXEL_SCALE: u32 = 2;
 
 const GRASS_ROWS: &[&str] = &[
     "....g.......",
@@ -36,26 +37,50 @@ const MUSHROOM_ROWS: &[&str] = &[
     "...ggggg...",
 ];
 const HIVE_ROWS: &[&str] = &[
-    "....................",
-    "........ssss........",
-    "......ssHHhHss......",
-    ".....sHHHHHHHHs.....",
-    "....sHHHHHHHHHHs....",
-    "...sHHHHHHHHHHHHs...",
-    "..sHHHHHHHHHHHHHHs..",
-    ".sHHHHHHHHHHHHHHHHs.",
-    "sHHHHHHHHHHHHHHHHHs.",
-    "sHHHHHHHHHHHHHHHHHs.",
-    "sHHHHHHHHHHHHHHHHHs.",
-    "sHHHHHHHHHHHHHHHHHs.",
-    "sHHHHHHHHHHHHHHHHHs.",
-    "sHHHHHHHHHHHHHHHHHs.",
-    "sHHHHHHHHHHHHHHHHHs.",
-    "sHHHHHHHHbbbbbbHHHHs",
-    "sHHHHHHHbbbbbbHHHHHs",
-    "sHHHHHHHbbbbbbHHHHHs",
-    "sHHHHHHHHHHHHHHHHHHs",
-    "ssssssssssssssssssss",
+    "...............ss...............",
+    "...............ss...............",
+    "..............sHHs..............",
+    ".............sHHHHs.............",
+    ".............sHHHHs.............",
+    "............sHHHHHHs............",
+    "...........shhhhhhhhs...........",
+    "...........sHHHHHHHHs...........",
+    "..........ssHHHHHHHHss..........",
+    ".........sHHHHHHHHHHHHs.........",
+    ".........shhhhhhhhhhhhs.........",
+    "........sHHHHHHHHHHHHHHs........",
+    ".......ssHHHHHHHHHHHHHHss.......",
+    ".......sHHHHHHHHHHHHHHHHs.......",
+    "......shhhhhhhhhhhhhhhhhhs......",
+    ".....sHHHHHHHHHHHHHHHHHHHHs.....",
+    ".....ssHHHHHHHHHHHHHHHHHHss.....",
+    "....sHHHHHHHHHHHHHHHHHHHHHHs....",
+    "...shhhhhhhhsbbbbbbshhhhhhhhs...",
+    "...sHHHHHHHHsbbbbbbsHHHHHHHHs...",
+    "..ssHHHHHHHHsbbbbbbsHHHHHHHHss..",
+    ".sHHHHHHHHHHsbbbbbbsHHHHHHHHHHs.",
+    "............sbbbbbbs............",
+    "............sbbbbbbs............",
+    "ssssssssssssssssssssssssssssssss",
+    "ssssssssssssssssssssssssssssssss",
+    "ssssssssssssssssssssssssssssssss",
+    "ssssssssssssssssssssssssssssssss",
+];
+const CLOUD_ROWS: &[&str] = &[
+    "....wwwwww....",
+    "..wwwwwwwwww..",
+    ".wwwwwwwwwwww.",
+    "wwwwwwwwwwwwww",
+    "wwwwwwwwwwwwww",
+    ".wwwwwwwwwwww.",
+];
+const BUTTERFLY_ROWS: &[&str] = &[
+    "..p....p..",
+    ".ppp..ppp.",
+    "pppppppppp",
+    ".pppYYppp.",
+    "...pYYp...",
+    "....g....g",
 ];
 
 const GRASS_PALETTE: &[(char, Color)] = &[
@@ -92,79 +117,146 @@ const HIVE_PALETTE: &[(char, Color)] = &[
     ('h', Color::rgba(248, 207, 116, 255)),
     ('b', Color::rgba(47, 34, 26, 255)),
 ];
+const CLOUD_PALETTE: &[(char, Color)] =
+    &[('.', TRANSPARENT), ('w', Color::rgba(255, 250, 224, 226))];
+const BUTTERFLY_PALETTE: &[(char, Color)] = &[
+    ('.', TRANSPARENT),
+    ('p', Color::rgba(225, 92, 149, 255)),
+    ('Y', Color::rgba(255, 222, 117, 255)),
+    ('g', Color::rgba(86, 166, 72, 255)),
+];
 
-const BEE_IDLE_ROWS: &[&str] = &[
-    ".............",
-    "......a......",
-    ".....mmm.....",
-    "....mhhhm....",
-    "...mmssmmm...",
-    "....mmmmm....",
-    ".....mmm.....",
-    ".....s.s.....",
+const BEE_EMPTY_ROW: &str = "..............";
+const BEE_ANTENNA_ROW: &str = "...a......a...";
+const BEE_BODY_TOP: &str = "....mmmmmm....";
+const BEE_BODY_HEAD: &str = "..mmhhmmhhmm..";
+const BEE_OPEN_EYES: &str = "...m.e..e.m...";
+const BEE_CLOSED_EYES: &str = "...c......c...";
+const BEE_BODY_STRIPES: &str = "..mmssssssmm..";
+const BEE_BODY_ABDOMEN: &str = "...ssmmmmss...";
+const BEE_WORKER_BADGE: &str = "....g....g....";
+const BEE_LEGS: &str = "..s..s..s..s..";
+const BEE_BODY_ROWS: [&str; 8] = [
+    BEE_BODY_TOP,
+    BEE_BODY_HEAD,
+    BEE_OPEN_EYES,
+    BEE_BODY_STRIPES,
+    BEE_BODY_ABDOMEN,
+    BEE_WORKER_BADGE,
+    BEE_LEGS,
+    BEE_EMPTY_ROW,
 ];
 const BEE_QUEUED_ROWS: &[&str] = &[
-    ".............",
-    "....a...a....",
-    "..ww...ww....",
-    "...ww.ww.....",
-    "....mmmmm....",
-    "...mmssmmm...",
-    "....mmmmm....",
-    ".....mmm.....",
-    ".....s.s.....",
+    "...q......q...",
+    BEE_ANTENNA_ROW,
+    "...w......w...",
+    "..w........w..",
+    BEE_BODY_ROWS[0],
+    BEE_BODY_ROWS[1],
+    BEE_BODY_ROWS[2],
+    BEE_BODY_ROWS[3],
+    BEE_BODY_ROWS[4],
+    BEE_BODY_ROWS[5],
+    BEE_BODY_ROWS[6],
+    BEE_BODY_ROWS[7],
 ];
 const BEE_FLY_A_ROWS: &[&str] = &[
-    "...ww...ww...",
-    "..wwww.wwww..",
-    "....a...a....",
-    "....mmmmm....",
-    "...mmssmmm...",
-    "...mmmsmmm...",
-    "....mmmmm....",
-    ".....mmm.....",
-    ".............",
+    BEE_EMPTY_ROW,
+    BEE_ANTENNA_ROW,
+    ".ww........ww.",
+    "..w........w..",
+    BEE_BODY_ROWS[0],
+    BEE_BODY_ROWS[1],
+    BEE_BODY_ROWS[2],
+    BEE_BODY_ROWS[3],
+    BEE_BODY_ROWS[4],
+    BEE_BODY_ROWS[5],
+    BEE_BODY_ROWS[6],
+    BEE_BODY_ROWS[7],
 ];
 const BEE_FLY_B_ROWS: &[&str] = &[
-    ".............",
-    "...ww...ww...",
-    "..wwww.wwww..",
-    "....a...a....",
-    "....mmmmm....",
-    "...mmssmmm...",
-    "...mmmsmmm...",
-    "....mmmmm....",
-    ".....mmm.....",
+    ".ww........ww.",
+    BEE_ANTENNA_ROW,
+    "..w........w..",
+    BEE_EMPTY_ROW,
+    BEE_BODY_ROWS[0],
+    BEE_BODY_ROWS[1],
+    BEE_BODY_ROWS[2],
+    BEE_BODY_ROWS[3],
+    BEE_BODY_ROWS[4],
+    BEE_BODY_ROWS[5],
+    BEE_BODY_ROWS[6],
+    BEE_BODY_ROWS[7],
 ];
-const BEE_RETURN_ROWS: &[&str] = &[
-    ".............",
-    ".............",
-    "....a...a....",
-    "...wwmmmww...",
-    "....mmmmm....",
-    "...mmssmmm...",
-    "....mmmmm....",
-    ".....s.s.....",
+const BEE_FLY_C_ROWS: &[&str] = &[
+    "...w......w...",
+    ".ww........ww.",
+    BEE_ANTENNA_ROW,
+    "..w........w..",
+    BEE_BODY_ROWS[0],
+    BEE_BODY_ROWS[1],
+    BEE_BODY_ROWS[2],
+    BEE_BODY_ROWS[3],
+    BEE_BODY_ROWS[4],
+    BEE_BODY_ROWS[5],
+    BEE_BODY_ROWS[6],
+    BEE_BODY_ROWS[7],
+];
+const BEE_IDLE_ROWS: &[&str] = &[
+    BEE_EMPTY_ROW,
+    BEE_ANTENNA_ROW,
+    "...w......w...",
+    "..w........w..",
+    BEE_BODY_ROWS[0],
+    BEE_BODY_ROWS[1],
+    BEE_CLOSED_EYES,
+    BEE_BODY_ROWS[3],
+    BEE_BODY_ROWS[4],
+    BEE_BODY_ROWS[5],
+    BEE_BODY_ROWS[6],
+    BEE_BODY_ROWS[7],
 ];
 const BEE_DONE_ROWS: &[&str] = &[
-    "..g.......g..",
-    "...g.....g...",
-    "....a...a....",
-    "...wwmmmww...",
-    "....mhmmm....",
-    "...mmssmmm...",
-    "....mmmmm....",
-    ".....mmm.....",
+    "....g....g....",
+    BEE_ANTENNA_ROW,
+    ".ww........ww.",
+    "..w........w..",
+    BEE_BODY_ROWS[0],
+    BEE_BODY_ROWS[1],
+    BEE_BODY_ROWS[2],
+    BEE_BODY_ROWS[3],
+    BEE_BODY_ROWS[4],
+    BEE_BODY_ROWS[5],
+    BEE_BODY_ROWS[6],
+    BEE_BODY_ROWS[7],
 ];
 const BEE_FAILED_ROWS: &[&str] = &[
-    ".............",
-    "....a...a....",
-    "...wwmmmww...",
-    "....mrrrm....",
-    "...mmssmmm...",
-    "....mrrrm....",
-    ".....mmm.....",
-    "....s...s....",
+    BEE_EMPTY_ROW,
+    BEE_ANTENNA_ROW,
+    "..w........w..",
+    BEE_EMPTY_ROW,
+    BEE_BODY_ROWS[0],
+    BEE_BODY_ROWS[1],
+    "...x......x...",
+    "..mmrrrrrrmm..",
+    "...ssrrrrss...",
+    "...r......r...",
+    BEE_BODY_ROWS[6],
+    BEE_BODY_ROWS[7],
+];
+const BEE_RETURN_ROWS: &[&str] = &[
+    BEE_EMPTY_ROW,
+    BEE_ANTENNA_ROW,
+    "...w......w...",
+    "..w........w..",
+    BEE_BODY_ROWS[0],
+    BEE_BODY_ROWS[1],
+    BEE_BODY_ROWS[2],
+    BEE_BODY_ROWS[3],
+    BEE_BODY_ROWS[4],
+    BEE_BODY_ROWS[5],
+    BEE_BODY_ROWS[6],
+    BEE_BODY_ROWS[7],
 ];
 
 const GOLD_BEE_PALETTE: &[(char, Color)] = &[
@@ -176,6 +268,10 @@ const GOLD_BEE_PALETTE: &[(char, Color)] = &[
     ('s', Color::rgba(76, 47, 24, 255)),
     ('r', Color::rgba(231, 61, 58, 255)),
     ('g', Color::rgba(255, 243, 147, 230)),
+    ('e', Color::rgba(46, 39, 30, 255)),
+    ('c', Color::rgba(115, 81, 40, 255)),
+    ('x', Color::rgba(227, 34, 42, 255)),
+    ('q', Color::rgba(255, 247, 210, 255)),
 ];
 const BLUE_BEE_PALETTE: &[(char, Color)] = &[
     ('.', TRANSPARENT),
@@ -186,6 +282,10 @@ const BLUE_BEE_PALETTE: &[(char, Color)] = &[
     ('s', Color::rgba(35, 65, 91, 255)),
     ('r', Color::rgba(235, 66, 67, 255)),
     ('g', Color::rgba(194, 247, 255, 230)),
+    ('e', Color::rgba(27, 45, 58, 255)),
+    ('c', Color::rgba(51, 108, 132, 255)),
+    ('x', Color::rgba(227, 34, 42, 255)),
+    ('q', Color::rgba(232, 250, 255, 255)),
 ];
 const GREEN_BEE_PALETTE: &[(char, Color)] = &[
     ('.', TRANSPARENT),
@@ -196,6 +296,10 @@ const GREEN_BEE_PALETTE: &[(char, Color)] = &[
     ('s', Color::rgba(39, 76, 39, 255)),
     ('r', Color::rgba(235, 66, 67, 255)),
     ('g', Color::rgba(219, 255, 179, 230)),
+    ('e', Color::rgba(32, 56, 31, 255)),
+    ('c', Color::rgba(75, 126, 66, 255)),
+    ('x', Color::rgba(227, 34, 42, 255)),
+    ('q', Color::rgba(242, 255, 227, 255)),
 ];
 const NEUTRAL_BEE_PALETTE: &[(char, Color)] = &[
     ('.', TRANSPARENT),
@@ -206,6 +310,10 @@ const NEUTRAL_BEE_PALETTE: &[(char, Color)] = &[
     ('s', Color::rgba(63, 69, 66, 255)),
     ('r', Color::rgba(235, 66, 67, 255)),
     ('g', Color::rgba(244, 248, 211, 230)),
+    ('e', Color::rgba(44, 52, 55, 255)),
+    ('c', Color::rgba(102, 112, 107, 255)),
+    ('x', Color::rgba(227, 34, 42, 255)),
+    ('q', Color::rgba(248, 250, 239, 255)),
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -249,13 +357,15 @@ pub enum BeeArtState {
     Failed,
 }
 
-pub fn scenery_sprites() -> [Sprite<'static>; 5] {
+pub fn scenery_sprites() -> [Sprite<'static>; 7] {
     [
         Sprite::new(GRASS_ROWS, GRASS_PALETTE),
         Sprite::new(FLOWER_ROWS, FLOWER_GOLD_PALETTE),
         Sprite::new(FLOWER_ROWS, FLOWER_PINK_PALETTE),
         Sprite::new(MUSHROOM_ROWS, MUSHROOM_PALETTE),
         Sprite::new(HIVE_ROWS, HIVE_PALETTE),
+        Sprite::new(CLOUD_ROWS, CLOUD_PALETTE),
+        Sprite::new(BUTTERFLY_ROWS, BUTTERFLY_PALETTE),
     ]
 }
 
@@ -263,8 +373,11 @@ pub fn bee_sprite(palette: WorkerPalette, state: BeeArtState, wing_frame: u8) ->
     let rows = match state {
         BeeArtState::Idle => BEE_IDLE_ROWS,
         BeeArtState::Queued => BEE_QUEUED_ROWS,
-        BeeArtState::Flying if wing_frame.is_multiple_of(2) => BEE_FLY_A_ROWS,
-        BeeArtState::Flying => BEE_FLY_B_ROWS,
+        BeeArtState::Flying => match wing_frame % 3 {
+            0 => BEE_FLY_A_ROWS,
+            1 => BEE_FLY_B_ROWS,
+            _ => BEE_FLY_C_ROWS,
+        },
         BeeArtState::Returning => BEE_RETURN_ROWS,
         BeeArtState::Done => BEE_DONE_ROWS,
         BeeArtState::Failed => BEE_FAILED_ROWS,
@@ -310,10 +423,11 @@ pub fn sprite_for_bee(bee: &Bee, wing_frame: u8) -> (Sprite<'static>, u32) {
 
 pub fn tooltip_size(tooltip: &Tooltip, scale: u32) -> Size {
     let scale = scale.max(1);
+    let task_characters = tooltip.task.chars().count();
+    let task_lines = task_characters.div_ceil(40).max(1) as u32;
     let longest_line = [
         tooltip.worker.as_str(),
         tooltip.kind.as_str(),
-        tooltip.task.as_str(),
         tooltip.elapsed.as_str(),
     ]
     .into_iter()
@@ -324,9 +438,11 @@ pub fn tooltip_size(tooltip: &Tooltip, scale: u32) -> Size {
         tooltip.cost.chars().count()
     } else {
         tooltip.cost.chars().count() + 1
-    }) as u32;
+    })
+    .max(task_characters.min(40)) as u32;
+    let line_count = 4_u32.saturating_add(task_lines);
     Size {
         width: (longest_line.saturating_mul(6).saturating_add(12) * scale).max(72 * scale),
-        height: 57 * scale,
+        height: (line_count.saturating_mul(9).saturating_add(8)) * scale,
     }
 }

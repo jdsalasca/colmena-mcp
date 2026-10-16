@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub const WIDGET_SIZE: Size = Size {
-    width: 320,
-    height: 180,
+    width: 260 * crate::art::PIXEL_SCALE,
+    height: 120 * crate::art::PIXEL_SCALE,
 };
 const POSITION_MARGIN: i32 = 24;
 const MENU_WIDTH: f32 = 76.0;
