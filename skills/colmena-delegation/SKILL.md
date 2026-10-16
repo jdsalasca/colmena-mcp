@@ -10,7 +10,7 @@ Tú eres el **PM y validador de calidad**; los workers (Codex, OpenCode) impleme
 ## 1. Elegir worker
 - `workers` → mira `available`, `remaining_usd`, `strengths` y `priority`.
 - Por defecto `luna-max` (Codex, prioridad 1); cuando se agote o necesites paralelismo extra → `ds-flash` (DeepSeek V4.1 Flash en OpenCode Go, con presupuesto). Luna solo va por Codex. Si omites `worker` el router elige (usa `kind: "code"|"docs"|…` como pista).
-- **`max-hive`** (`worker: "max-hive"` o `kind: "bulk"`): muchas tareas pequeñas y mecánicas en paralelo a costo ~0, con un modelo *contributor* (sin zero data retention: nada sensible) y calidad menor → **valida siempre** con `review`/`diff`. Para cambiarle el modelo usa `scripts/opencode-models.mjs --contributor`, edita `colmena.yml` y llama `reload_config` (detalle en el README).
+- **`max-hive`** (`worker: "max-hive"` o `kind: "bulk"`): muchas tareas pequeñas y mecánicas en paralelo a costo ~0, con un modelo *contributor* (sin zero data retention: nada sensible) y calidad menor → **valida siempre** con `review`/`diff` y registra tu `verdict` antes de fusionar. Para cambiarle el modelo usa `scripts/opencode-models.mjs --contributor`, edita `colmena.yml` y llama `reload_config` (detalle en el README).
 - Si un worker está sin presupuesto, `run` falla con alternativas: no hay cambio silencioso; decide tú.
 - OpenCode carga ~50k tokens de contexto por ejecución: no lo uses para tareas triviales.
 
@@ -21,9 +21,9 @@ Objetivo y *por qué* · rutas exactas (`context_files`) y qué NO tocar · crit
 1. `run_many` (cada tarea en su worktree `colmena/<id>`). Una tarea → `run` (`wait: true` si es corta).
 2. `wait` (mode `all`; repite mientras haya `pending`). El usuario recibe toasts al lanzar, cada 10 min y al terminar.
 3. `result` en `min`; solo `normal`/`full` si hace falta. Si `reportOk` es false lee `text`.
-4. **Valida como PM:** `review` (rol reviewer) y/o `diff`; corre tú los tests en la rama si es crítico. Si falta algo: `continue` con feedback concreto (mismo worker y sesión).
+4. **Valida como PM:** `review` (rol reviewer) y/o `diff`; corre tú los tests en la rama si es crítico. Tras revisar, registra el veredicto con `verdict {job_id, verdict: "accepted"|"needs_work", note?}`: `accepted` solo si cumple el brief; `needs_work` si requiere correcciones (un job `done` no está aceptado hasta que exista veredicto). Si falta algo: `continue` con feedback concreto (mismo worker y sesión) y registra un veredicto nuevo al corregirlo.
 5. Encadenar: `compact` del primero → `handoff` con `from: [id]`.
-6. `merge` (manual; `squash` para historial limpio) → **`report`** con los `job_ids` de la ronda (estilo `papercraft`) → **`present`** para cerrar cada feature/hito con los mismos `job_ids` (`luna-max` redacta el deck por defecto; `open: true` lo abre).
+6. `merge` (manual, solo después del veredicto; `squash` para historial limpio) → **`report`** con los `job_ids` de la ronda (estilo `papercraft`) → **`present`** para cerrar cada feature/hito con los mismos `job_ids` (`luna-max` redacta el deck por defecto; `open: true` lo abre).
 7. **Audita el deck antes de compartirlo:** abre `deck.html`, contrasta cada dato con `result`, `review`/`diff` y las pruebas; verifica objetivo, decisiones y riesgos en `notes`. Si hay errores, continúa `presenterJob` con instrucciones concretas o vuelve a llamar `present` con notas de corrección. Comparte la ruta/enlace con el dueño solo cuando la presentación pase esta revisión.
 8. `cleanup` cuando corresponda; `present` crea su carpeta dentro de `reports/` y no publica el archivo.
 

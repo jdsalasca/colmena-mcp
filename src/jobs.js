@@ -12,6 +12,7 @@ import * as iso from './isolation.js';
 import { writeFileAtomic } from './atomic-write.js';
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
+const VERDICTS = new Set(['accepted', 'needs_work']);
 const RETRY_WINDOW_MS = 30_000;
 const CHECKPOINT_MS = 1000;
 
@@ -394,6 +395,14 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     });
   }
 
+  function verdict(id, { verdict: value, note } = {}) {
+    need(id);
+    if (!VERDICTS.has(value)) throw new Error(`veredicto inválido '${value}': usa accepted o needs_work`);
+    const at = Date.now();
+    store.update(id, { verdict: value, verdictNote: note ?? null, verdictAt: at });
+    return { job_id: id, verdict: value, note: note ?? null, at };
+  }
+
   function recoverOrphans() {
     for (const m of store.list({})) {
       if (!['running', 'queued'].includes(m.state) || live.has(m.id) || isProcessAlive(m.owner)) continue;
@@ -454,7 +463,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
 
   return {
     bus, resolveWorker, routeWorker: spec => chooseWorker(config.settings, ledger, spec), workers: () => workerStatus(config.settings, ledger),
-    submit, status, result, wait, cancel, continueJob, summarize, compact, review, recoverOrphans, shutdown,
+    submit, status, result, wait, cancel, continueJob, summarize, compact, review, verdict, recoverOrphans, shutdown,
     list: f => store.list(f ?? {}).map(m => status(m.id)),
     metas: () => store.list({}),
     meta: id => need(id),

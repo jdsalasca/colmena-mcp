@@ -4,14 +4,17 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const FAILURE_LIMIT = 5;
 const ERROR_LIMIT = 200;
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
+const VERDICTS = new Set(['accepted', 'needs_work']);
 
 const numberOrZero = value => Number.isFinite(value) ? value : 0;
 const successRate = (done, terminal) => terminal ? done / terminal : null;
+const ratio = (part, total) => total ? part / total : null;
 
-function newGroup(includeNominalCost = false) {
+function newGroup({ nominalCost = false, review = false } = {}) {
   return {
     runs: 0, done: 0, failed: 0, terminal: 0, durationS: 0, durationCount: 0, costUsd: 0, inputTokens: 0, outputTokens: 0,
-    ...(includeNominalCost ? { nominalCostUsd: 0 } : {}),
+    ...(nominalCost ? { nominalCostUsd: 0 } : {}),
+    ...(review ? { reviewed: 0, accepted: 0, needsWork: 0 } : {}),
   };
 }
 
@@ -20,6 +23,11 @@ function addMeta(group, meta, metrics) {
   if (meta.state === 'done') group.done++;
   if (meta.state === 'failed') group.failed++;
   if (TERMINAL.has(meta.state)) group.terminal++;
+  if (Object.hasOwn(group, 'reviewed') && VERDICTS.has(meta.verdict)) {
+    group.reviewed++;
+    if (meta.verdict === 'accepted') group.accepted++;
+    else group.needsWork++;
+  }
 
   group.durationS += metrics.durationS;
   if (metrics.durationValid) group.durationCount++;
@@ -35,6 +43,13 @@ function publicGroup(group) {
     done: group.done,
     failed: group.failed,
     successRate: successRate(group.done, group.terminal),
+    ...(Object.hasOwn(group, 'reviewed') ? {
+      reviewed: group.reviewed,
+      accepted: group.accepted,
+      needsWork: group.needsWork,
+      reviewCoverage: ratio(group.reviewed, group.runs),
+      acceptanceRate: ratio(group.accepted, group.reviewed),
+    } : {}),
     avgDurationS: group.durationCount ? group.durationS / group.durationCount : 0,
     costUsd: group.costUsd,
     inputTokens: group.inputTokens,
@@ -75,7 +90,7 @@ export function computeStats(metas, { sinceMs = 0, now = Date.now() } = {}) {
 
     const worker = meta.worker ?? 'unknown';
     const kind = meta.kind ?? 'unknown';
-    (byWorker[worker] ??= newGroup(true));
+    (byWorker[worker] ??= newGroup({ nominalCost: true, review: true }));
     (byKind[kind] ??= newGroup());
     addMeta(byWorker[worker], meta, metrics);
     addMeta(byKind[kind], meta, metrics);
