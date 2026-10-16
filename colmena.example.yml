@@ -53,6 +53,7 @@ defaults:
   max_parallel: 4
   timeout_min: 60
   exit_grace_s: 20  # tras entrega final de Codex, espera antes de matar el proceso colgado
+  retry_transient: 1  # reintenta una vez fallos del proveedor <30 s y reintentables (isRetryable / "Unexpected server error"); 0 lo desactiva
 
 plugins:
   notify:

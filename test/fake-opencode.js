@@ -1,4 +1,4 @@
-// Fake opencode CLI for tests. Mimics `opencode run --format json`: honors --dir, -s, --agent; keywords SLEEP / FAIL / EDIT.
+// Fake opencode CLI for tests. Mimics `opencode run --format json`: honors --dir, -s, --agent; keywords SLEEP / FAIL / ERROR / ERROR_ONCE / EDIT.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -16,9 +16,7 @@ const emit = o => process.stdout.write(JSON.stringify(o) + '\n');
 emit({ type: 'step_start', sessionID: session, part: { type: 'step-start' } });
 process.stdout.write('not json at all\n');
 
-if (prompt.includes('SLEEP')) setTimeout(() => {}, 600000);
-else if (prompt.includes('FAIL')) { process.stderr.write('oc boom\n'); process.exit(1); }
-else setTimeout(() => {
+const finish = () => {
   let files = 'ninguno';
   if (prompt.includes('EDIT') && agent !== 'plan') { fs.writeFileSync(path.join(dir, 'edited.txt'), 'hola\n'); files = 'edited.txt'; }
   emit({ type: 'text', sessionID: session, part: { type: 'text', text: 'pensando en voz alta…' } });
@@ -26,4 +24,20 @@ else setTimeout(() => {
   emit({ type: 'text', sessionID: session, part: { type: 'text', text: `RESULT: ok oc (${session})\nFILES: ${files}\nTESTS: 1/1\nRISKS: ninguno` } });
   emit({ type: 'step_finish', sessionID: session, part: { type: 'step-finish', tokens: { input: 500, output: 20, reasoning: 0 }, cost: 0.01 } });
   if (prompt.includes('LINGER')) setTimeout(() => {}, 600000);
-}, Number(process.env.FAKE_DELAY || 0));
+};
+// Same shape as `opencode run --format json` on upstream failures: a step_finish that still reports cost, then an error event.
+const failTransient = () => {
+  emit({ type: 'step_finish', sessionID: session, part: { type: 'step-finish', tokens: { input: 0, output: 0, reasoning: 0 }, cost: 0.01 } });
+  emit({ type: 'error', timestamp: Date.now(), sessionID: session, error: { name: 'UnknownError', data: { message: 'Unexpected server error. Check server logs for details.', ref: 'err_test' } } });
+  process.exitCode = 1;
+};
+
+if (prompt.includes('SLEEP')) setTimeout(() => {}, 600000);
+else if (prompt.includes('ERROR_ONCE')) {
+  const marker = path.join(dir, '.fake-opencode-error-once');
+  if (fs.existsSync(marker)) setTimeout(finish, Number(process.env.FAKE_DELAY || 0));
+  else { fs.writeFileSync(marker, 'retried\n'); failTransient(); }
+}
+else if (prompt.includes('ERROR')) failTransient();
+else if (prompt.includes('FAIL')) { process.stderr.write('oc boom\n'); process.exit(1); }
+else setTimeout(finish, Number(process.env.FAKE_DELAY || 0));

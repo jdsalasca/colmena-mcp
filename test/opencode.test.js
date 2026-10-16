@@ -38,6 +38,15 @@ test('opencode parseLine: session, text, usage with cost, garbage', () => {
   assert.equal(parseLine('nope').kind, 'other');
   assert.equal(parseLine('{"type":"tool_use"}').kind, 'other');
 });
+test('opencode parseLine: provider error events expose message and retryable', () => {
+  const { parseLine } = oc;
+  const unknown = parseLine('{"type":"error","timestamp":1,"sessionID":"ses_x","error":{"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details.","ref":"err_ae29f0e4"}}}');
+  assert.deepEqual(unknown, { kind: 'error', message: 'Unexpected server error. Check server logs for details.', retryable: true });
+  const api = parseLine(`{"type":"error","error":{"name":"APIError","data":{"message":"Upstream request failed: [invalid_value] Invalid value for 'tools': maximum number of items is 128.","statusCode":400,"isRetryable":false}}}`);
+  assert.deepEqual(api, { kind: 'error', message: "Upstream request failed: [invalid_value] Invalid value for 'tools': maximum number of items is 128.", retryable: false });
+  assert.equal(parseLine('{"type":"error","error":{"name":"APIError","data":{"message":"busy","isRetryable":true}}}').retryable, true);
+  assert.deepEqual(parseLine('{"type":"error","error":{"name":"Mystery"}}'), { kind: 'error', message: 'Mystery', retryable: false });
+});
 test('OpenCode step_finish is not a reliable end-of-turn signal', () => {
   assert.equal(oc.completesOn(oc.parseLine('{"type":"step_finish","part":{"tokens":{}}}')), false);
 });
@@ -60,14 +69,14 @@ test('opencode env isolates config by default and creates the selected config di
   assert.equal(oc.env({ home, settings: { providers: { opencode: { isolate_config: false } } } }), undefined);
 });
 
-function ocHome(extra = '') {
+function ocHome(extra = '', defaultsLine = 'defaults: {worker: luna-max}') {
   const home = tmp('colmena-oh-');
   fs.writeFileSync(path.join(home, 'colmena.yml'), `
 workers:
   luna-max: {provider: codex, model: gpt-6-luna, effort: max, priority: 1}
   ds-flash: {provider: opencode, model: opencode-go/deepseek-v4.1-flash, effort: max, priority: 3}
 roles: {reporter: ds-flash, summarizer: ds-flash, reviewer: luna-max}
-defaults: {worker: luna-max}
+${defaultsLine}
 plugins: {notify: {enabled: false}}
 ${extra}`);
   return home;
@@ -157,6 +166,52 @@ test('opencode failure keeps stderr; cancel kills it', async () => {
   await new Promise(r => setTimeout(r, 500));
   await jm.cancel(s); await jm.wait([s], { timeoutS: 20 });
   assert.equal(jm.status(s).state, 'cancelled');
+});
+test('transient provider error: one automatic retry in the same job, cost recorded once', async () => {
+  const { jm, config } = mk();
+  const seen = [];
+  jm.bus.on('job.started', () => seen.push('started'));
+  jm.bus.on('job.finished', e => seen.push(`finished:${e.state}`));
+  const id = jm.submit(S('ERROR_ONCE', { worker: 'ds-flash' }));
+  await jm.wait([id], { timeoutS: 30 });
+  const r = jm.result(id, { detail: 'normal' });
+  assert.equal(r.state, 'done');
+  assert.equal(r.worker, 'ds-flash');
+  assert.equal(jm.meta(id).retries, 1);
+  assert.equal(r.cost_usd, 0.03);
+  assert.deepEqual(seen, ['started', 'finished:done']);
+  const events = fs.readFileSync(path.join(jm.jobDir(id), 'events.jsonl'), 'utf8').trim().split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
+  assert.equal(events.filter(e => e.type === 'step_start').length, 2, 'two executions share the same job dir');
+  const month = JSON.parse(fs.readFileSync(path.join(config.home, 'usage.json'), 'utf8'))[new Date().toISOString().slice(0, 7)]['ds-flash'];
+  assert.equal(month.runs, 1, 'ledger records the job once');
+  assert.equal(month.cost_usd, 0.03, 'failed attempt usage is not lost nor double-counted');
+});
+test('exhausted transient retry fails with the provider name and the event message', async () => {
+  const { jm } = mk();
+  const id = jm.submit(S('ERROR', { worker: 'ds-flash' }));
+  await jm.wait([id], { timeoutS: 30 });
+  const r = jm.result(id);
+  assert.equal(r.state, 'failed');
+  assert.equal(jm.meta(id).retries, 1);
+  assert.equal(r.cost_usd, 0.02);
+  assert.match(r.error, /^opencode salió con código 1: Unexpected server error\. Check server logs for details\.$/);
+  const events = fs.readFileSync(path.join(jm.jobDir(id), 'events.jsonl'), 'utf8').trim().split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
+  assert.equal(events.filter(e => e.type === 'step_start').length, 2);
+});
+test('retry_transient: 0 disables retry and non-retryable failures are never retried', async () => {
+  const disabled = getConfig({ ...baseEnv(ocHome('', 'defaults: {worker: luna-max, retry_transient: 0}')), COLMENA_OPENCODE_BIN: fakeOpencode });
+  const jm0 = createJobManager(disabled);
+  const id0 = jm0.submit(S('ERROR', { worker: 'ds-flash' }));
+  await jm0.wait([id0], { timeoutS: 30 });
+  assert.equal(jm0.result(id0).state, 'failed');
+  assert.equal(jm0.meta(id0).retries, 0);
+  assert.match(jm0.result(id0).error, /^opencode salió con código 1: Unexpected server error/);
+
+  const { jm } = mk();
+  const id = jm.submit(S('FAIL', { worker: 'ds-flash' }));
+  await jm.wait([id], { timeoutS: 30 });
+  assert.equal(jm.meta(id).retries, 0);
+  assert.match(jm.result(id).error, /^opencode salió con código 1: oc boom$/);
 });
 test('OpenCode job with a finished step still follows general timeout', async () => {
   const config = getConfig({ ...baseEnv(ocHome(), { COLMENA_JOB_TIMEOUT_MIN: '0.02', COLMENA_EXIT_GRACE_S: '0.1' }), COLMENA_OPENCODE_BIN: fakeOpencode });

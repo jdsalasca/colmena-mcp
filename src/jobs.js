@@ -12,6 +12,7 @@ import * as iso from './isolation.js';
 import { writeFileAtomic } from './atomic-write.js';
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
+const RETRY_WINDOW_MS = 30_000;
 const alive = pid => { if (!pid) return false; try { process.kill(pid, 0); return true; } catch { return false; } };
 
 export function createJobManager(config, { bus = new EventEmitter(), writeArtifact = writeFileAtomic } = {}) {
@@ -86,48 +87,70 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
   }
 
   function start({ id, prompt, worker, timeoutMin, exitGraceS }) {
-    const meta = store.update(id, { state: 'running', startedAt: Date.now() });
+    const meta = store.update(id, { state: 'running', startedAt: Date.now(), retries: 0 });
     const dir = store.jobDir(id);
     const state = { cancelled: false, timedOut: false, delivered: false, hasFinalMessage: false, finishedByGrace: false, timer: null, graceTimer: null, handle: null };
     live.set(id, state);
     maxSeen = Math.max(maxSeen, live.size);
-    let usage = {}; let lastText = ''; let lastSessionId;
+    // Usage and lastText accumulate per job: a transient retry keeps what the failed attempt already spent and appends to the same events log.
+    let usage = {}; let lastText = '';
+    let retries = 0;
+    const retryLimit = config.retryTransient;
     const adapter = getAdapter(worker.provider);
     const finishByGrace = message => {
       if (state.finishedByGrace) return;
       state.finishedByGrace = true;
       state.message = message;
       clearTimeout(state.graceTimer);
-      handle.kill();
+      state.handle.kill();
     };
-    const handle = startRun(adapter.cmd(config), adapter.buildArgs({
-      prompt, workdir: meta.workdir, lastMessagePath: path.join(dir, 'last_message.md'),
-      readonly: meta.readonly, resumeSessionId: meta.resumeSessionId, ephemeral: meta.ephemeral, worker,
-    }), {
-      cwd: meta.workdir, logPath: path.join(dir, 'events.jsonl'), parseLine: adapter.parseLine,
-      env: adapter.env?.(config),
-      onEvent: e => {
-        if (e.kind === 'session' && e.sessionId !== lastSessionId) { lastSessionId = e.sessionId; store.update(id, { sessionId: e.sessionId }); }
-        else if (e.kind === 'message') { lastText = e.text; state.hasFinalMessage = true; }
-        else if (e.kind === 'usage') {
-          for (const [k, v] of Object.entries(e.usage)) if (typeof v === 'number') usage[k] = (usage[k] ?? 0) + v;
-          if (!state.delivered && state.hasFinalMessage && adapter.completesOn?.(e)) {
-            state.delivered = true;
-            state.graceTimer = setTimeout(() => finishByGrace(
-              `El agente entregó su respuesta, pero el proceso no terminó dentro de la gracia de ${exitGraceS} s y fue finalizado.`,
-            ), exitGraceS * 1000);
+    const attempt = () => {
+      lastText = '';
+      state.hasFinalMessage = false;
+      state.delivered = false;
+      const attemptStartedAt = Date.now();
+      let attemptError; let lastSessionId;
+      const handle = startRun(adapter.cmd(config), adapter.buildArgs({
+        prompt, workdir: meta.workdir, lastMessagePath: path.join(dir, 'last_message.md'),
+        readonly: meta.readonly, resumeSessionId: meta.resumeSessionId, ephemeral: meta.ephemeral, worker,
+      }), {
+        cwd: meta.workdir, logPath: path.join(dir, 'events.jsonl'), parseLine: adapter.parseLine,
+        env: adapter.env?.(config),
+        onEvent: e => {
+          if (e.kind === 'session' && e.sessionId !== lastSessionId) { lastSessionId = e.sessionId; store.update(id, { sessionId: e.sessionId }); }
+          else if (e.kind === 'message') { lastText = e.text; state.hasFinalMessage = true; }
+          else if (e.kind === 'error') { attemptError = e; state.lastProviderError = e; }
+          else if (e.kind === 'usage') {
+            for (const [k, v] of Object.entries(e.usage)) if (typeof v === 'number') usage[k] = (usage[k] ?? 0) + v;
+            if (!state.delivered && state.hasFinalMessage && adapter.completesOn?.(e)) {
+              state.delivered = true;
+              state.graceTimer = setTimeout(() => finishByGrace(
+                `El agente entregó su respuesta, pero el proceso no terminó dentro de la gracia de ${exitGraceS} s y fue finalizado.`,
+              ), exitGraceS * 1000);
+            }
           }
+        },
+      });
+      state.handle = handle;
+      store.update(id, { pid: handle.pid });
+      clearTimeout(state.timer);
+      state.timer = setTimeout(() => {
+        if (state.delivered) finishByGrace('El agente ya había entregado su respuesta al alcanzar el timeout general; el proceso fue finalizado y el job se marcó done.');
+        else { state.timedOut = true; handle.kill(); }
+      }, timeoutMin * 60000);
+      handle.done.then(r => {
+        const fastTransient = r.code !== 0 && Date.now() - attemptStartedAt < RETRY_WINDOW_MS && attemptError?.retryable === true;
+        if (fastTransient && !state.cancelled && !state.timedOut && !state.finishedByGrace && retries < retryLimit) {
+          retries += 1;
+          store.update(id, { retries });
+          attempt();
+          return;
         }
-      },
-    });
-    state.handle = handle;
-    store.update(id, { pid: handle.pid });
-    state.timer = setTimeout(() => {
-      if (state.delivered) finishByGrace('El agente ya había entregado su respuesta al alcanzar el timeout general; el proceso fue finalizado y el job se marcó done.');
-      else { state.timedOut = true; handle.kill(); }
-    }, timeoutMin * 60000);
+        finalize(id, meta, state, r, lastText, usage, worker, timeoutMin);
+      });
+    };
     bus.emit('job.started', { id, worker: meta.worker, provider: meta.provider ?? 'desconocido', task: meta.task, kind: meta.kind });
-    handle.done.then(r => finalize(id, meta, state, r, lastText, usage, worker, timeoutMin));
+    attempt();
   }
 
   function finalize(id, meta, state, r, lastText, usage, worker, timeoutMin) {
@@ -142,7 +165,10 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     else if (state.finishedByGrace) Object.assign(patch, { state: 'done', finishedByGrace: true, message: state.message });
     else if (state.timedOut) Object.assign(patch, { state: 'failed', error: `timeout tras ${timeoutMin} min` });
     else if (r.code === 0) patch.state = 'done';
-    else Object.assign(patch, { state: 'failed', error: `codex salió con código ${r.code}: ${r.stderrTail}`.slice(0, 1500) });
+    else Object.assign(patch, {
+      state: 'failed',
+      error: `${meta.provider ?? 'agente'} salió con código ${r.code}: ${r.stderrTail || state.lastProviderError?.message || ''}`.slice(0, 1500),
+    });
     if (patch.state === 'done' && meta.kind === 'compact' && meta.parentId && text) writeArtifact(path.join(store.jobDir(meta.parentId), 'summary.md'), text);
     if (meta.kind === 'run' && !meta.readonly) {
       try { const ch = iso.changes(meta.workdir, meta.base); patch.files = ch.files; patch.diffstat = ch.diffstat; } catch {}

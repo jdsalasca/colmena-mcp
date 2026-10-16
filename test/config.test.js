@@ -10,6 +10,7 @@ test('defaults', () => {
   assert.equal(c.maxParallel, 4);
   assert.equal(c.timeoutMin, 60);
   assert.equal(c.exitGraceS, 20);
+  assert.equal(c.retryTransient, 1);
 });
 test('LUNA_HOME moves dirs', () => {
   const c = getConfig({ LUNA_HOME: 'X:\h', LUNA_CODEX_BIN: 'a.exe' });
@@ -50,4 +51,16 @@ test('reloadSettings picks up a changed YAML exit_grace_s', () => {
   fs.writeFileSync(file, 'defaults: {worker: luna-max, exit_grace_s: 2}\n');
   c.reloadSettings();
   assert.equal(c.exitGraceS, 2);
+});
+test('retry_transient: YAML, env override and reloadSettings', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-reload-retry-'));
+  const file = path.join(home, 'colmena.yml');
+  fs.writeFileSync(file, 'defaults: {worker: luna-max, retry_transient: 0}\n');
+  const c = getConfig({ COLMENA_HOME: home });
+  assert.equal(c.retryTransient, 0);
+  fs.writeFileSync(file, 'defaults: {worker: luna-max, retry_transient: 2}\n');
+  c.reloadSettings();
+  assert.equal(c.retryTransient, 2);
+  const envOverride = getConfig({ COLMENA_HOME: home, COLMENA_RETRY_TRANSIENT: '3' });
+  assert.equal(envOverride.retryTransient, 3);
 });
