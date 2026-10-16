@@ -60,6 +60,25 @@ defaults: {worker: sin-costo}
   const invalid = withYml('workers: {x: {provider: codex, model: m, free: "yes"}}\n');
   assert.throws(() => loadSettings(invalid.h, invalid.env), /workers\.x\.free/);
 });
+test('MC-2: reserve_usd por worker y por default, validado como no negativo', () => {
+  const { h, env } = withYml(`
+workers:
+  con-reserva: {provider: opencode, model: m, budget: {monthly_usd: 1}, reserve_usd: 0.25}
+  hereda: {provider: codex, model: n}
+roles: {reporter: con-reserva, summarizer: con-reserva, reviewer: con-reserva, presenter: con-reserva}
+defaults: {worker: con-reserva, reserve_usd: 0.05}
+`);
+  const s = loadSettings(h, env);
+  assert.equal(s.workers['con-reserva'].reserve_usd, 0.25);
+  assert.equal(s.workers.hereda.reserve_usd, undefined);
+  assert.equal(s.defaults.reserve_usd, 0.05);
+  assert.equal(loadSettings(home(), {}).defaults.reserve_usd, 0);
+
+  const invalidWorker = withYml('workers: {x: {provider: codex, model: m, reserve_usd: -0.5}}\n');
+  assert.throws(() => loadSettings(invalidWorker.h, invalidWorker.env), /workers\.x\.reserve_usd/);
+  const invalidDefaults = withYml('defaults: {worker: luna-max, reserve_usd: -1}\n');
+  assert.throws(() => loadSettings(invalidDefaults.h, invalidDefaults.env), /defaults\.reserve_usd/);
+});
 test('preferences.provider defaults to auto and accepts both providers', () => {
   for (const provider of ['codex', 'opencode']) {
     const { h, env } = withYml(`preferences: {provider: ${provider}}\n`);
