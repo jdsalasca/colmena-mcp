@@ -67,6 +67,16 @@ test('exit_grace_s has a default and must be positive', () => {
   const { h, env } = withYml('defaults: {worker: luna-max, exit_grace_s: 0}\n');
   assert.throws(() => loadSettings(h, env), /defaults\.exit_grace_s/);
 });
+test('retry_transient: default 1, admite 0 y rechaza negativos o decimales', () => {
+  assert.equal(loadSettings(home(), {}).defaults.retry_transient, 1);
+  assert.equal(DEFAULT_SETTINGS.defaults.retry_transient, 1);
+  const zero = withYml('defaults: {worker: luna-max, retry_transient: 0}\n');
+  assert.equal(loadSettings(zero.h, zero.env).defaults.retry_transient, 0);
+  for (const bad of ['-1', '1.5']) {
+    const invalid = withYml(`defaults: {worker: luna-max, retry_transient: ${bad}}\n`);
+    assert.throws(() => loadSettings(invalid.h, invalid.env), /defaults\.retry_transient/);
+  }
+});
 test('yml replaces workers, merges sections', () => {
   const { h, env } = withYml(`
 workers:
