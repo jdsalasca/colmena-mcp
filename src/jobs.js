@@ -196,7 +196,8 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
 
   async function wait(ids, { mode = 'all', timeoutS = 120 } = {}) {
     ids.forEach(need);
-    const t = Math.min(Math.max(timeoutS, 1), 600) * 1000;
+    const maxS = Math.min(Math.max(config.waitMaxS ?? 600, 1), 1800);
+    const t = Math.min(Math.max(timeoutS, 1), maxS) * 1000;
     const ps = ids.map(id => finished.get(id)?.promise ?? Promise.resolve());
     const cond = mode === 'any' ? Promise.race(ps) : Promise.all(ps);
     let timer;
