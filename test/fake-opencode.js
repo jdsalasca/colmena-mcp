@@ -1,4 +1,5 @@
 // Fake opencode CLI for tests. Mimics `opencode run --format json`: honors --dir, -s, --agent; keywords SLEEP / FAIL / ERROR / ERROR_ONCE / EDIT.
+// Contract-error knob (no network): FAKE_EXPOSE_MODEL=<id> makes the provider expose a model id in its events.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -22,7 +23,7 @@ const finish = () => {
   emit({ type: 'text', sessionID: session, part: { type: 'text', text: 'pensando en voz alta…' } });
   emit({ type: 'step_finish', sessionID: session, part: { type: 'step-finish', tokens: { input: 1000, output: 10, reasoning: 5 }, cost: 0.01 } });
   emit({ type: 'text', sessionID: session, part: { type: 'text', text: `RESULT: ok oc (${session})\nFILES: ${files}\nTESTS: 1/1\nRISKS: ninguno` } });
-  emit({ type: 'step_finish', sessionID: session, part: { type: 'step-finish', tokens: { input: 500, output: 20, reasoning: 0 }, cost: 0.01 } });
+  emit({ type: 'step_finish', sessionID: session, part: { type: 'step-finish', tokens: { input: 500, output: 20, reasoning: 0 }, cost: 0.01 }, ...(process.env.FAKE_EXPOSE_MODEL ? { model: process.env.FAKE_EXPOSE_MODEL } : {}) });
   if (prompt.includes('LINGER')) setTimeout(() => {}, 600000);
 };
 // Same shape as `opencode run --format json` on upstream failures: a step_finish that still reports cost, then an error event.

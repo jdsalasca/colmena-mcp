@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { getConfig } from '../src/config.js';
 import { attachRun, startRun } from '../src/runner.js';
 import { getAdapter } from '../src/providers/index.js';
+import { fakeCodex, fakeOpencode, tmp } from './helpers.js';
 
 const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-codex.js');
 const fakeEnv = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-env.js');
@@ -149,4 +151,76 @@ test('codex resume: no -C/-s (real resume rejects them); readonly via sandbox_mo
   const ro = codex.buildArgs({ ...base, prompt: 'x', resumeSessionId: 'S1', readonly: true });
   assert.ok(!ro.includes('-C') && !ro.includes('-s') && !ro.includes('--dangerously-bypass-approvals-and-sandbox'));
   assert.ok(ro.includes('sandbox_mode="read-only"'));
+});
+
+// Contract smoke (scripts/smoke.js) exercised against the fakes: no network, real provider CLI shims.
+const smoke = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'smoke.js');
+const smokeHome = () => {
+  const home = tmp('colmena-sm-home-');
+  const yml = path.join(home, 'colmena.yml');
+  fs.writeFileSync(yml, `
+workers:
+  luna-max: {provider: codex, model: gpt-6-luna, effort: max, priority: 1}
+  ds-flash: {provider: opencode, model: opencode-go/deepseek-v4.1-flash, effort: max, priority: 3}
+roles: {reporter: ds-flash, summarizer: ds-flash, reviewer: luna-max}
+defaults: {worker: luna-max, max_parallel: 2}
+plugins:
+  notify: {enabled: false}
+  report: {enabled: false}
+  present: {enabled: false}
+  improve: {enabled: false}
+  widget: {enabled: false}`);
+  return { home, yml };
+};
+const runSmoke = (extraEnv = {}, argv = ['luna-max,ds-flash']) => {
+  const { home, yml } = smokeHome();
+  const res = spawnSync(process.execPath, [smoke, ...argv], {
+    encoding: 'utf8',
+    env: { ...process.env, COLMENA_HOME: home, COLMENA_CONFIG: yml, COLMENA_CODEX_BIN: fakeCodex, COLMENA_OPENCODE_BIN: fakeOpencode, COLMENA_NOTIFIER: 'none', ...extraEnv },
+  });
+  const out = res.stdout + res.stderr;
+  return { status: res.status, out, homeLine: /^home: (.*)$/m.exec(out)?.[1], cwdLine: /^cwd: (.*)$/m.exec(out)?.[1] };
+};
+
+test('fake-codex: FAKE_NO_FINAL omits turn.completed; FAKE_EXPOSE_MODEL exposes it', () => {
+  const dir = tmp('colmena-sm-fc-');
+  const out = path.join(dir, 'out.md');
+  const run = env => spawnSync(process.execPath, [fakeCodex, '-C', dir, '-o', out, 'hola'], { encoding: 'utf8', env: { ...process.env, ...env } });
+  assert.ok(!run({ FAKE_NO_FINAL: '1' }).stdout.includes('turn.completed'));
+  assert.ok(run({}).stdout.includes('turn.completed'));
+  assert.ok(run({ FAKE_EXPOSE_MODEL: 'gpt-6-luna' }).stdout.includes('"model":"gpt-6-luna"'));
+});
+test('fake-opencode: FAKE_EXPOSE_MODEL exposes a model id in events', () => {
+  const dir = tmp('colmena-sm-fo-');
+  const res = spawnSync(process.execPath, [fakeOpencode, '--dir', dir, 'hola'], { encoding: 'utf8', env: { ...process.env, FAKE_EXPOSE_MODEL: 'oc-expuesto' } });
+  assert.equal(res.status, 0);
+  assert.ok(res.stdout.includes('"model":"oc-expuesto"'));
+});
+test('smoke con fakes: contrato OK por proveedor, no afirma modelo sin exponer y limpia temporales', () => {
+  const r = runSmoke();
+  assert.equal(r.status, 0, r.out);
+  for (const worker of ['luna-max', 'ds-flash']) for (const label of ['worker', 'reporte', 'señal-final', 'modelo']) assert.ok(r.out.includes(`[${worker}] ${label}:`), `falta [${worker}] ${label}`);
+  assert.match(r.out, /modelo: OK .*no expuesto.*no se afirma modelo ejecutado/);
+  assert.ok(r.homeLine && !fs.existsSync(r.homeLine), 'home temporal eliminado');
+  assert.ok(r.cwdLine && !fs.existsSync(r.cwdLine), 'cwd temporal eliminado');
+});
+test('smoke: reporte inválido → exit 1, nombra la comprobación y limpia temporales', () => {
+  const r = runSmoke({ FAKE_RAW: 'texto sin formato' });
+  assert.equal(r.status, 1);
+  assert.match(r.out, /reporte: FALLO/);
+  assert.ok(r.homeLine && !fs.existsSync(r.homeLine), 'temporales limpiados incluso en fallo');
+});
+test('smoke: señal final ausente en codex → exit 1; opencode no falla por no emitirla', () => {
+  const r = runSmoke({ FAKE_NO_FINAL: '1' });
+  assert.equal(r.status, 1);
+  assert.match(r.out, /\[luna-max\] señal-final: FALLO/);
+  assert.match(r.out, /\[ds-flash\] señal-final: OK/);
+});
+test('smoke: modelo expuesto distinto → exit 1; expuesto igual → OK', () => {
+  const bad = runSmoke({ FAKE_EXPOSE_MODEL: 'gpt-6-otra' }, ['luna-max']);
+  assert.equal(bad.status, 1);
+  assert.match(bad.out, /modelo: FALLO/);
+  const good = runSmoke({ FAKE_EXPOSE_MODEL: 'gpt-6-luna' }, ['luna-max']);
+  assert.equal(good.status, 0);
+  assert.match(good.out, /modelo: OK/);
 });
