@@ -96,7 +96,7 @@ Notas:
 Flujo recomendado: `workers` → `run_many` → `wait` → `result` → `review`/`diff` → `merge` → `report` → `improve`. La skill [`skills/colmena-delegation`](skills/colmena-delegation/SKILL.md) explica cómo redactar los briefs.
 
 ## Notificaciones
-Con `plugins.notify` activo recibes un toast de Windows agrupado al lanzar agentes, un latido (`N corriendo · M en cola · X min · $Y`) cada `heartbeat_min` mientras haya algo corriendo (nunca en silencio inútil: sin trabajo no hay latido), y un aviso al terminar o fallar. Todo queda también en `~/.colmena/activity.log`.
+Con `plugins.notify` activo recibes un toast de Windows agrupado al lanzar agentes, con el proveedor visible (`luna-max (codex)`), y un latido cada `heartbeat_min` mientras haya trabajos corriendo o en cola. Los avisos de término y fallo identifican el proveedor (`[codex] luna-max`). Todas las notificaciones terminan con un overview actualizado por proveedor, por ejemplo `En curso: codex 2 · opencode 1 · +1 en cola`, o `En curso: ninguno` cuando no queda trabajo. Sin trabajo no hay latido. El cuerpo del toast respeta el límite de 300 caracteres y acorta la tarea para conservar el overview. Todo queda también en `~/.colmena/activity.log`.
 
 ## Estilos de reporte
 Un estilo es una carpeta `styles/<nombre>/` con `style.md` (instrucciones para el agente reportero) y `template.html` (plantilla con marcadores `{{title}}`, `{{jobs}}`… y `<!--COLMENA:CARDS-->`). Se buscan primero en `~/.colmena/styles/` y luego en el repo. Si el reportero falla, un renderizador determinista rellena la plantilla (`usedFallback: true`). Incluido: **papercraft**.

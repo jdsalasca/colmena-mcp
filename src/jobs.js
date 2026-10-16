@@ -106,7 +106,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     state.handle = handle;
     store.update(id, { pid: handle.pid });
     state.timer = setTimeout(() => { state.timedOut = true; handle.kill(); }, timeoutMin * 60000);
-    bus.emit('job.started', { id, worker: meta.worker, task: meta.task, kind: meta.kind });
+    bus.emit('job.started', { id, worker: meta.worker, provider: meta.provider ?? 'desconocido', task: meta.task, kind: meta.kind });
     handle.done.then(r => finalize(id, meta, state, r, lastText, usage, worker, timeoutMin));
   }
 
@@ -128,7 +128,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     patch.costUsd = costOf(worker, usage);
     try { ledger.record(meta.worker, usage, patch.costUsd); } catch { /* bookkeeping must never break a job */ }
     const updated = store.update(id, patch);
-    bus.emit('job.finished', { id, worker: meta.worker, kind: meta.kind, state: updated.state, task: meta.task, error: updated.error, costUsd: patch.costUsd, usage, startedAt: updated.startedAt, endedAt: updated.endedAt });
+    bus.emit('job.finished', { id, worker: meta.worker, provider: meta.provider ?? 'desconocido', kind: meta.kind, state: updated.state, task: meta.task, error: updated.error, costUsd: patch.costUsd, usage, startedAt: updated.startedAt, endedAt: updated.endedAt });
     finished.get(id)?.resolve();
     pump();
   }
