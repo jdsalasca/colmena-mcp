@@ -14,10 +14,10 @@ import { computeStats, DAY_MS } from './stats.js';
 import { buildImprovePrompt, hasRecentImprove, PENDING_FOCUSES, CONTINUOUS_IMPROVEMENT_PROMPT } from './plugins/improve.js';
 import { createWidgetController } from './plugins/widget.js';
 import { writeFileAtomic } from './atomic-write.js';
+import { TERMINAL } from './job-states.js';
 
 const { version: packageVersion } = createRequire(import.meta.url)('../package.json');
 
-const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
 const isolationEnum = z.enum(['worktree', 'inplace', 'readonly']).optional()
   .describe('worktree (defecto en repos git: rama colmena/<id> aislada) | inplace (edita el directorio) | readonly (solo lectura)');
 const detailEnum = z.enum(['min', 'normal', 'full']).optional().describe('min (defecto, ~300 tokens) | normal | full');

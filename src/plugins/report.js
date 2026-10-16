@@ -4,16 +4,14 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { improveNext } from './improve.js';
 import { jobMetrics } from '../job-metrics.js';
+import { TERMINAL } from '../job-states.js';
 import { writeFileAtomic } from '../atomic-write.js';
 
 const BUILTIN_STYLES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'styles');
-const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
 
 export const escapeHtml = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const esc = escapeHtml;
-const para = s => esc(s).replace(/\n/g, '<br>');
+const para = s => escapeHtml(s).replace(/\n/g, '<br>');
 export const formatDuration = s => (s < 90 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`);
-const fmtDuration = formatDuration;
 export const slugify = t => (String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)) || 'informe';
 
 function hasTemplate(dir, marker) {
@@ -64,10 +62,10 @@ function card(j) {
   const body = rep
     ? sec('Resultado', rep.RESULT) + sec('Archivos', rep.FILES) + sec('Pruebas', rep.TESTS) + (rep.RISKS && !/^ninguno\.?$/i.test(rep.RISKS.trim()) ? sec('Riesgos', rep.RISKS, 'risks') : '')
     : sec('Resultado', j.text || '(sin reporte)') + sec('Error', j.error, 'risks');
-  return `<article class="card" data-state="${esc(j.state)}">
+  return `<article class="card" data-state="${escapeHtml(j.state)}">
   <span class="washi"></span>
-  <header><h3>${esc(String(j.task).slice(0, 90))}</h3><span class="stamp ${stamp}">${esc(j.state)}</span></header>
-  <p class="meta"><span class="chip">${esc(j.worker)}</span><span class="chip">${fmtDuration(j.durationS)}</span><span class="chip">$${j.cost_usd.toFixed(2)}</span>${j.branch ? `<span class="chip">rama ${esc(j.branch)}</span>` : ''}</p>
+  <header><h3>${escapeHtml(String(j.task).slice(0, 90))}</h3><span class="stamp ${stamp}">${escapeHtml(j.state)}</span></header>
+  <p class="meta"><span class="chip">${escapeHtml(j.worker)}</span><span class="chip">${formatDuration(j.durationS)}</span><span class="chip">$${j.cost_usd.toFixed(2)}</span>${j.branch ? `<span class="chip">rama ${escapeHtml(j.branch)}</span>` : ''}</p>
   ${body}
 </article>`;
 }
@@ -75,9 +73,9 @@ function card(j) {
 export function renderFallback(data, styleDir) {
   const tpl = fs.readFileSync(path.join(styleDir, 'template.html'), 'utf8');
   const vals = {
-    title: esc(data.title), subtitle: esc(data.subtitle), generated: esc(data.generatedAt.replace('T', ' ').slice(0, 16)),
+    title: escapeHtml(data.title), subtitle: escapeHtml(data.subtitle), generated: escapeHtml(data.generatedAt.replace('T', ' ').slice(0, 16)),
     jobs: data.totals.jobs, done: data.totals.done, failed: data.totals.failed + data.totals.cancelled,
-    cost: data.totals.costUsd.toFixed(2), duration: fmtDuration(data.totals.durationS),
+    cost: data.totals.costUsd.toFixed(2), duration: formatDuration(data.totals.durationS),
   };
   return tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => String(vals[k] ?? '')).replace('<!--COLMENA:CARDS-->', data.jobs.map(card).join('\n'));
 }

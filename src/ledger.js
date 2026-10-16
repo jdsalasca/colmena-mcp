@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { writeFileAtomic } from './atomic-write.js';
+import { round } from './job-metrics.js';
 
 const EMPTY = () => ({ runs: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0 });
-const round = n => Math.round(n * 1e6) / 1e6;
 
 // Advisory lock around each read-modify-write of usage.json so two MCP servers sharing COLMENA_HOME
 // cannot lose updates. Acquisition is fail-soft: retries are short, a lock older than `staleMs` or
