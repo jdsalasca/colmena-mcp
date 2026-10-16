@@ -121,3 +121,11 @@ Los agentes corren **sin sandbox ni aprobaciones** (decisión del usuario). Miti
 ## 12. Decisiones registradas
 
 Nombre `luna-mcp`; Node 24 en vez de Python; modelo/esfuerzo fijos; aislamiento configurable por llamada con `worktree` por defecto; merge manual; sin base de datos.
+
+## 13. Resultados de la Tarea 0 (verificados 2026-10-15)
+
+- `codex.exe` 0.130 (`bin\codex.exe`) **rechaza** `model_reasoning_effort = "max"`; 0.162 (`bin\<hash>\codex.exe`) lo acepta. El servidor elige el `codex.exe` más reciente por mtime.
+- Eventos reales de `exec --json`: `thread.started{thread_id}`, `turn.started`, `item.completed{item:{type:"agent_message",text}}`, `turn.completed{usage}`.
+- Búsqueda web: flag global `--search` (va **antes** de `exec`).
+- `exec` espera stdin si no se cierra: el runner lo lanza con stdin ignorado.
+- Humo real con `gpt-6-luna`: OK (`scripts/smoke.js`).
