@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
+import { loadSettings } from './settings.js';
 
 function newestCodex() {
   const base = path.join(process.env.LOCALAPPDATA || '', 'OpenAI', 'Codex', 'bin');
@@ -19,17 +20,28 @@ function newestCodex() {
   return found[0]?.p ?? 'codex';
 }
 
+// A .js path (test fakes) runs through node; anything else is spawned as-is.
+export function resolveCmd(binPath) {
+  return /\.(m?js|cjs)$/i.test(binPath) ? { bin: process.execPath, prefixArgs: [binPath] } : { bin: binPath, prefixArgs: [] };
+}
+
 export function getConfig(env = process.env) {
-  const home = env.LUNA_HOME || path.join(os.homedir(), '.luna-mcp');
-  const binPath = env.LUNA_CODEX_BIN || newestCodex();
-  const isJs = /\.(m?js|cjs)$/i.test(binPath);
+  const e = name => env[`COLMENA_${name}`] ?? env[`LUNA_${name}`];
+  const home = e('HOME') || path.join(os.homedir(), '.colmena');
+  const settings = loadSettings(home, env);
   return {
     home,
     jobsDir: path.join(home, 'jobs'),
     worktreesDir: path.join(home, 'worktrees'),
+    reportsDir: path.join(home, 'reports'),
     auditPath: path.join(home, 'audit.log'),
-    maxParallel: Number(env.LUNA_MAX_PARALLEL) || 4,
-    timeoutMin: Number(env.LUNA_JOB_TIMEOUT_MIN) || 60,
-    codex: isJs ? { bin: process.execPath, prefixArgs: [binPath] } : { bin: binPath, prefixArgs: [] },
+    activityPath: path.join(home, 'activity.log'),
+    usagePath: path.join(home, 'usage.json'),
+    settings,
+    maxParallel: Number(e('MAX_PARALLEL')) || settings.defaults.max_parallel,
+    timeoutMin: Number(e('JOB_TIMEOUT_MIN')) || settings.defaults.timeout_min,
+    codex: resolveCmd(e('CODEX_BIN') || newestCodex()),
+    opencode: resolveCmd(e('OPENCODE_BIN') || 'opencode'),
+    notifier: e('NOTIFIER') || 'toast',
   };
 }
