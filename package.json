@@ -1,0 +1,22 @@
+{
+  "name": "codex-mcp-juanda",
+  "version": "0.1.0",
+  "description": "MCP server that lets Claude orchestrate gpt-6-luna (max) agents through Codex CLI",
+  "type": "module",
+  "bin": {
+    "luna-mcp": "src/server.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "start": "node src/server.js",
+    "smoke": "node scripts/smoke.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^4.6.7"
+  }
+}
