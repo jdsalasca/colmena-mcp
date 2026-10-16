@@ -38,7 +38,7 @@ workers:
   ds-flash:       {provider: opencode, model: opencode-go/deepseek-v4.1-flash, effort: max, priority: 2, strengths: [code, docs, summary, report], budget: {monthly_usd: 10}}
   max-hive:       {provider: opencode, model: opencode-go/muse-spark-1.3-contributor, effort: high, priority: 9, strengths: [bulk], budget: {monthly_usd: 5}}
 roles:    {reporter: ds-flash, summarizer: ds-flash, reviewer: luna-max, presenter: luna-max}
-defaults: {worker: luna-max, max_parallel: 4, timeout_min: 60, exit_grace_s: 20}
+defaults: {worker: luna-max, max_parallel: 4, timeout_min: 60, exit_grace_s: 20, retry_transient: 1}
 preferences: {provider: auto} # codex | opencode para priorizar un proveedor sin reiniciar
 plugins:
   notify: {enabled: true, on: [start, finish, fail], heartbeat_min: 10}
@@ -58,7 +58,8 @@ providers:
 
 Notas:
 - `defaults.exit_grace_s` (20 s) da tiempo al proceso de Codex para salir después de entregar su mensaje final y emitir `turn.completed`. Si sigue activo al vencer, Colmena mata el árbol del proceso y termina el job como `done`, con `finishedByGrace: true` y un mensaje en el resultado. Si llega antes el timeout general pero Codex ya entregó, también queda `done`; OpenCode no usa esta gracia porque `step_finish` puede ser solo un paso intermedio. Edita el YAML y llama a `reload_config` para aplicar workers, roles, defaults, plugins y proveedores sin reiniciar.
-- `COLMENA_MAX_PARALLEL`, `COLMENA_JOB_TIMEOUT_MIN` y `COLMENA_EXIT_GRACE_S` conservan prioridad sobre los valores YAML.
+- Los errores del proveedor que OpenCode escribe en `events.jsonl` (`{"type":"error", error:{name, data:{message, isRetryable}}}`) ya no se pierden: `result.error` nombra al proveedor real (`opencode salió con código 1: <stderr o mensaje del evento>`) y, cuando un job falla en menos de 30 s con un error reintentable (`isRetryable: true` o mensaje con `Unexpected server error`), Colmena lo reintenta automáticamente una vez en el mismo worktree y worker. `defaults.retry_transient` (entero ≥ 0, defecto 1; `0` desactiva el reintento) lo controla y `reload_config` lo recoge. El reintento es del mismo job: suma el uso de ambos intentos y lo registra una sola vez en el ledger, emite `job.started`/`job.finished` una sola vez y guarda `meta.retries`.
+- `COLMENA_MAX_PARALLEL`, `COLMENA_JOB_TIMEOUT_MIN`, `COLMENA_EXIT_GRACE_S` y `COLMENA_RETRY_TRANSIENT` conservan prioridad sobre los valores YAML.
 - `preferences.provider` acepta `auto` (ruteo actual), `codex` u `opencode`. La tool `preferences` consulta la preferencia y el worker elegido ahora, o la cambia en memoria y en el YAML efectivo (`COLMENA_CONFIG` o `$COLMENA_HOME/colmena.yml`) para el siguiente `run`; no requiere reinicio. Si no hay workers disponibles de ese proveedor, el router usa otro y devuelve un `note`. `worker` explícito siempre manda; las tools auxiliares continúan usando sus roles.
 - `workers` muestra `free` por worker; `stats {since_days?}` resume jobs, éxito, duración, costo registrado y `nominalCostUsd` por worker, tokens, tipos y fallos de la ventana indicada (30 días por defecto).
 - `workers.<alias>.free: true` declara que el modelo de ese worker está cubierto a costo cero: el ledger registra `cost_usd: 0`, `meta.json` conserva `nominalCostUsd` y `result` muestra `cost_usd: 0` junto con `nominal_cost_usd`. El flag exime al worker de su presupuesto mensual. Úsalo solo si tu plan garantiza el costo cero; el costo nominal sigue visible para auditar lo que reportó el proveedor.
