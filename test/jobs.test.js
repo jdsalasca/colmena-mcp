@@ -446,6 +446,23 @@ test('artifact writes go through writeFileAtomic: rename failure keeps previous 
   assert.ok(fs.readdirSync(parentDir).every(f => !f.includes('.tmp')));
   assert.equal(jm.result(compactId).state, 'done');
 });
+test('MC-7: prompt.txt y brief.md se publican con writeArtifact: rename fallido no deja .tmp y el job sigue', async () => {
+  const config = getConfig(baseEnv(codexOnlyHome(), {}));
+  const calls = [];
+  const jm = createJobManager(config, {
+    writeArtifact: (file, data) => {
+      calls.push(path.basename(file));
+      return writeFileAtomic(file, data, { renameSync: () => { throw new Error('rename falló'); } });
+    },
+  });
+  const id = jm.submit(S('hola'));
+  await jm.wait([id]);
+  assert.ok(calls.includes('prompt.txt'), 'prompt.txt debe publicarse con el writeArtifact inyectado');
+  assert.ok(calls.includes('brief.md'), 'brief.md debe publicarse con el writeArtifact inyectado');
+  const dir = jm.jobDir(id);
+  assert.ok(fs.readdirSync(dir).every(f => !f.includes('.tmp')), 'no debe quedar ningún .tmp');
+  assert.equal(jm.result(id).state, 'done');
+});
 test('compact job publishes summary.md and last_message.md complete, without temp files', async () => {
   const { jm } = mk();
   const parent = jm.submit(S('padre'));

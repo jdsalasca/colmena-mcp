@@ -99,7 +99,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
       owner: process.pid, createdAt: Date.now(),
     });
     reserveBudget(id, worker.name, reservedUsd);
-    fs.writeFileSync(path.join(store.jobDir(id), 'prompt.txt'), prompt);
+    persistText(path.join(store.jobDir(id), 'prompt.txt'), prompt);
     persistText(path.join(store.jobDir(id), 'brief.md'), prompt);
     store.audit({ id, kind, worker: worker.name, cwd, isolation: spec.isolation, briefHash: crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 12) });
     ensureFinished(id);
