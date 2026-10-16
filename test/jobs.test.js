@@ -547,18 +547,22 @@ test('cleanup purge: solo terminales vencidos, filtro por id y en curso intacto'
   await jm.wait([running], { timeoutS: 20 });
 });
 
-function retryHome() {
+function retryHome({ retryTransient = 0 } = {}) {
   const home = tmp('luna-retry-home-');
   fs.writeFileSync(path.join(home, 'colmena.yml'), `
 workers:
   oc: {provider: opencode, model: fake-oc, priority: 1}
 roles: {reporter: oc, summarizer: oc, reviewer: oc}
-defaults: {worker: oc, retry_transient: 0}
+defaults: {worker: oc, retry_transient: ${retryTransient}}
 plugins: {notify: {enabled: false}}
 `);
   return home;
 }
 const mc4 = (env = {}) => createJobManager(getConfig({ ...baseEnv(retryHome(), env), COLMENA_OPENCODE_BIN: fakeOpencode }));
+// Stall thresholds in tenths of a second: 0.005 min = 300 ms, well below the general timeout.
+const stallJobs = (env = {}, options) => createJobManager(getConfig({
+  ...baseEnv(retryHome(options), { COLMENA_STALL_TIMEOUT_MIN: '0.005', ...env }), COLMENA_OPENCODE_BIN: fakeOpencode,
+}));
 
 test('MC-4: un job fallido se relanza con retry y termina done con el brief original íntegro', async () => {
   const log = path.join(tmp('luna-retry-log-'), 'fake.log'); process.env.FAKE_LOG = log;
@@ -643,6 +647,61 @@ test('MC-4: retry pasa por submit y reserva presupuesto como cualquier job', asy
   assert.equal(jm.meta(id2).reservedUsd, 0.25);
   await jm.wait([id2]);
   assert.equal(jm.result(id2).state, 'done');
+});
+
+test('MC-11: un job mudo se mata por inactividad, falla con error claro y sin llegar al timeout general', async () => {
+  const jm = stallJobs();
+  const id = jm.submit(S('MUTE'));
+  const started = Date.now();
+  await jm.wait([id], { timeoutS: 20 });
+  const r = jm.result(id);
+  assert.equal(r.state, 'failed');
+  assert.equal(r.error, 'sin actividad durante 0.005 min; el proveedor no respondió');
+  assert.equal(jm.meta(id).timedOut, undefined);
+  assert.equal(jm.meta(id).retries, 0);
+  assert.ok(Date.now() - started < 5000, 'el vigilante debe cortar mucho antes del timeout general de 60 min');
+  assert.throws(() => process.kill(jm.meta(id).pid, 0), 'el proceso del job debe quedar muerto');
+});
+
+test('MC-11: el cuelgue mudo cuenta como error transitorio y se reintenta una vez', async () => {
+  const log = path.join(tmp('luna-stall-log-'), 'fake.log'); process.env.FAKE_LOG = log;
+  try {
+    const jm = stallJobs({}, { retryTransient: 1 });
+    const id = jm.submit(S('MUTE'));
+    await jm.wait([id], { timeoutS: 30 });
+    const r = jm.result(id);
+    assert.equal(r.state, 'failed');
+    assert.equal(r.error, 'sin actividad durante 0.005 min; el proveedor no respondió');
+    assert.equal(jm.meta(id).retries, 1);
+    assert.equal(fs.readFileSync(log, 'utf8').trim().split('\n').length, 2, 'debe haber un intento nuevo tras el cuelgue');
+  } finally { delete process.env.FAKE_LOG; }
+});
+
+test('MC-11: un job que ya entregó no se marca failed por inactividad; la gracia manda', async () => {
+  const { jm } = mk({ COLMENA_STALL_TIMEOUT_MIN: '0.005', COLMENA_EXIT_GRACE_S: '2' });
+  const id = jm.submit(S('LINGER'));
+  await jm.wait([id], { timeoutS: 10 });
+  const r = jm.result(id);
+  assert.equal(r.state, 'done');
+  assert.equal(jm.meta(id).finishedByGrace, true);
+  assert.equal(r.error, undefined);
+});
+
+test('MC-11: la actividad se mide por tamaño/mtime del log, no por eventos parseables', async () => {
+  const jm = stallJobs();
+  const id = jm.submit(S('DRIP'));
+  await jm.wait([id], { timeoutS: 20 });
+  assert.equal(jm.result(id).state, 'done');
+});
+
+test('MC-11: stall_timeout_min 0 desactiva el vigilante', async () => {
+  const jm = stallJobs({ COLMENA_STALL_TIMEOUT_MIN: '0' });
+  const id = jm.submit(S('MUTE'));
+  await new Promise(resolve => setTimeout(resolve, 800));
+  assert.equal(jm.status(id).state, 'running');
+  await jm.cancel(id);
+  await jm.wait([id], { timeoutS: 20 });
+  assert.equal(jm.status(id).state, 'cancelled');
 });
 
 test('MC-4: brief.md se publica con writeArtifact y sobrevive al arranque del job', async () => {

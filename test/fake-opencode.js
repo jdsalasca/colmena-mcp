@@ -1,4 +1,4 @@
-// Fake opencode CLI for tests. Mimics `opencode run --format json`: honors --dir, -s, --agent; keywords SLEEP / FAIL / ERROR / ERROR_ONCE / EDIT.
+// Fake opencode CLI for tests. Mimics `opencode run --format json`: honors --dir, -s, --agent; keywords SLEEP / MUTE / DRIP / FAIL / ERROR / ERROR_ONCE / EDIT.
 // Contract-error knob (no network): FAKE_EXPOSE_MODEL=<id> makes the provider expose a model id in its events.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,7 +33,17 @@ const failTransient = () => {
   process.exitCode = 1;
 };
 
-if (prompt.includes('SLEEP')) setTimeout(() => {}, 600000);
+// DRIP keeps appending raw bytes (no newlines, nothing parseable) so only size/mtime prove the provider is alive.
+const drip = () => {
+  let n = 0;
+  const t = setInterval(() => {
+    process.stdout.write('ruido-sin-salto '.repeat(8));
+    if (++n >= 20) { clearInterval(t); finish(); }
+  }, Number(process.env.FAKE_DRIP_MS || 50));
+};
+
+if (prompt.includes('SLEEP') || prompt.includes('MUTE')) setTimeout(() => {}, 600000);
+else if (prompt.includes('DRIP')) drip();
 else if (prompt.includes('ERROR_ONCE')) {
   const marker = path.join(dir, '.fake-opencode-error-once');
   if (fs.existsSync(marker)) setTimeout(finish, Number(process.env.FAKE_DELAY || 0));
