@@ -3,7 +3,7 @@
 Servidor MCP (stdio) para que **Claude Code orqueste y valide, como un product manager**, mientras una colmena de agentes obreros —**Codex** (Luna) y **OpenCode** (DeepSeek, etc.)— hace el trabajo pesado. Tú gastas pocos tokens: briefs cortos de ida, reportes de ≤15 líneas de vuelta.
 
 - **Workers por alias** en un `colmena.yml`: proveedor + modelo + esfuerzo + prioridad + presupuesto. Las herramientas solo aceptan un alias, nunca un modelo o flag libre.
-- **Presupuesto y ruteo:** el servidor cuenta el gasto por worker y por mes; sin `worker` explícito, elige el siguiente disponible por prioridad (y por `kind`).
+- **Presupuesto y ruteo:** el servidor cuenta el gasto por worker y por mes; sin `worker` explícito, elige el proveedor preferido disponible y luego aplica `kind` y prioridad.
 - **Aislamiento por llamada:** `worktree` (rama `colmena/<id>`, por defecto en repos git), `inplace` o `readonly`.
 - **Paralelismo con cola**, sesiones reanudables, resúmenes, compactación y relevo entre agentes.
 - **Plugin `notify`:** toast de Windows al lanzar agentes, latido cada 10 min mientras haya trabajo, y aviso al terminar o fallar.
@@ -38,6 +38,7 @@ workers:
   max-hive:       {provider: opencode, model: opencode-go/muse-spark-1.3-contributor, effort: high, priority: 9, strengths: [bulk], budget: {monthly_usd: 5}}
 roles:    {reporter: ds-flash, summarizer: ds-flash, reviewer: luna-max}
 defaults: {worker: luna-max, max_parallel: 4, timeout_min: 60}
+preferences: {provider: auto} # codex | opencode para priorizar un proveedor sin reiniciar
 plugins:
   notify: {enabled: true, on: [start, finish, fail], heartbeat_min: 10}
   report: {enabled: true, default_style: papercraft}
@@ -54,6 +55,7 @@ providers:
 
 Notas:
 - `standards.enabled` activa el preámbulo de trabajo para `run` (TDD, código limpio/DRY, reutilización, evidencia y formato de reporte). Los helpers `summarize`, `compact`, `review` y `report` no lo reciben. Edita el YAML y llama a `reload_config` para aplicar workers, roles, defaults, plugins y proveedores sin reiniciar; `COLMENA_MAX_PARALLEL` y `COLMENA_JOB_TIMEOUT_MIN` conservan prioridad sobre el YAML.
+- `preferences.provider` acepta `auto` (ruteo actual), `codex` u `opencode`. La tool `preferences` consulta la preferencia y el worker elegido ahora, o la cambia en memoria y en el YAML efectivo (`COLMENA_CONFIG` o `$COLMENA_HOME/colmena.yml`) para el siguiente `run`; no requiere reinicio. Si no hay workers disponibles de ese proveedor, el router usa otro y devuelve un `note`. `worker` explícito siempre manda; las tools auxiliares continúan usando sus roles.
 - `stats {since_days?}` resume jobs, éxito, duración, costo, tokens, workers, tipos y fallos de la ventana indicada (30 días por defecto).
 - `effort` se pasa como `model_reasoning_effort` (Codex) o `--variant` (OpenCode).
 - `providers.opencode.isolate_config` está activo por defecto: OpenCode usa `$COLMENA_HOME/opencode-config` como `XDG_CONFIG_HOME`. Así no hereda los servidores MCP, plugins, agentes, `AGENTS.md` ni skills de la configuración global del usuario; los estándares de Colmena llegan por el preámbulo. La autenticación se conserva en `XDG_DATA_HOME`. Define `config_dir` para usar una configuración mínima propia (la carpeta se crea si falta), o `isolate_config: false` para volver a usar la configuración habitual.
@@ -76,7 +78,8 @@ Notas:
 
 | Tool | Para qué |
 |---|---|
-| `workers` | Workers con prioridad, fortalezas, gasto del mes, restante y disponibilidad |
+| `workers` | Workers con prioridad, fortalezas, preferencia (`preferred`), gasto del mes, restante y disponibilidad |
+| `preferences` | Consulta o cambia en caliente `auto` / `codex` / `opencode`; muestra también el worker que elegiría el router |
 | `stats` | Resumen histórico por estado, worker y tipo (`since_days`, defecto 30) |
 | `reload_config` | Relee y valida `colmena.yml`; jobs posteriores usan los cambios sin reiniciar |
 | `run` / `run_many` | Lanza uno o varios agentes (`worker?`, `kind?`, `isolation?`, `wait: true` espera el reporte) |

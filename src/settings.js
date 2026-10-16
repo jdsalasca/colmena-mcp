@@ -24,6 +24,7 @@ const Worker = z.object({
 
 const Roles = z.object({ reporter: z.string(), summarizer: z.string(), reviewer: z.string() });
 const Defaults = z.object({ worker: z.string(), max_parallel: z.number().int().positive().default(4), timeout_min: z.number().positive().default(60) });
+const Preferences = z.object({ provider: z.enum(['auto', 'codex', 'opencode']).default('auto') });
 const Notify = z.object({
   enabled: z.boolean().default(true),
   on: z.array(z.enum(['start', 'finish', 'fail'])).default(['start', 'finish', 'fail']),
@@ -46,6 +47,7 @@ export const DEFAULT_SETTINGS = {
   },
   roles: { reporter: 'ds-flash', summarizer: 'ds-flash', reviewer: 'luna-max' },
   defaults: { worker: 'luna-max', max_parallel: 4, timeout_min: 60 },
+  preferences: { provider: 'auto' },
   plugins: { notify: {}, report: {}, improve: {} },
   standards: { enabled: true, preamble: DEFAULT_STANDARDS_PREAMBLE },
   providers: { opencode: { isolate_config: true } },
@@ -64,6 +66,10 @@ export function loadSettings(home, env = process.env) {
     workers: user.workers ?? DEFAULT_SETTINGS.workers,
     roles: { ...DEFAULT_SETTINGS.roles, ...(user.roles ?? {}) },
     defaults: { ...DEFAULT_SETTINGS.defaults, ...(user.defaults ?? {}) },
+    preferences: user.preferences == null ? DEFAULT_SETTINGS.preferences
+      : typeof user.preferences === 'object' && !Array.isArray(user.preferences)
+        ? { ...DEFAULT_SETTINGS.preferences, ...user.preferences }
+        : user.preferences,
     plugins: {
       notify: { ...DEFAULT_SETTINGS.plugins.notify, ...(user.plugins?.notify ?? {}) },
       report: { ...DEFAULT_SETTINGS.plugins.report, ...(user.plugins?.report ?? {}) },
@@ -87,7 +93,7 @@ export function loadSettings(home, env = process.env) {
   };
   const schema = z.object({
     workers: z.record(z.string(), Worker).refine(w => Object.keys(w).length > 0, 'debe haber al menos un worker'),
-    roles: Roles, defaults: Defaults,
+    roles: Roles, defaults: Defaults, preferences: Preferences,
     plugins: z.object({ notify: Notify, report: Report, improve: Improve }),
     standards: Standards,
     providers: Providers,

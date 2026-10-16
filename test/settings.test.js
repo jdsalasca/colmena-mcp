@@ -11,6 +11,7 @@ const withYml = (yml, env = {}) => { const h = home(); fs.writeFileSync(path.joi
 
 test('no yml → defaults', () => {
   const s = loadSettings(home(), {});
+  assert.deepEqual(s.preferences, { provider: 'auto' });
   assert.deepEqual(Object.keys(s.workers).sort(), ['ds-flash', 'luna-max', 'max-hive']);
   assert.equal(s.workers['ds-flash'].model, 'opencode-go/deepseek-v4.1-flash');
   assert.equal(s.workers['ds-flash'].effort, 'max');
@@ -35,6 +36,16 @@ test('no yml → defaults', () => {
   assert.match(s.standards.preamble, /webfetch/i);
   assert.match(s.standards.preamble, /fuente/i);
   assert.deepEqual(DEFAULT_SETTINGS.defaults.max_parallel, 4);
+});
+test('preferences.provider defaults to auto and accepts both providers', () => {
+  for (const provider of ['codex', 'opencode']) {
+    const { h, env } = withYml(`preferences: {provider: ${provider}}\n`);
+    assert.deepEqual(loadSettings(h, env).preferences, { provider });
+  }
+});
+test('invalid preferences.provider identifies the field', () => {
+  const { h, env } = withYml('preferences: {provider: nope}\n');
+  assert.throws(() => loadSettings(h, env), /preferences\.provider/);
 });
 test('yml replaces workers, merges sections', () => {
   const { h, env } = withYml(`
@@ -116,9 +127,12 @@ test('invalid plugins.improve identify the field', () => {
 test('config: COLMENA_* beats LUNA_*, settings attached, default home', () => {
   const c = getConfig({ COLMENA_HOME: 'C:\\a', LUNA_HOME: 'C:\\b', COLMENA_CODEX_BIN: 'x.js' });
   assert.ok(c.home.endsWith('a'));
+  assert.equal(c.settingsPath, path.join(c.home, 'colmena.yml'));
   assert.equal(c.settings.defaults.worker, 'luna-max');
   const d = getConfig({ LUNA_CODEX_BIN: 'x.js' });
   assert.ok(d.home.endsWith('.colmena'));
   const e = getConfig({ COLMENA_HOME: 'C:\\a', COLMENA_MAX_PARALLEL: '2', LUNA_CODEX_BIN: 'x.js' });
   assert.equal(e.maxParallel, 2);
+  const custom = getConfig({ COLMENA_HOME: 'C:\\a', COLMENA_CONFIG: 'C:\\custom.yml', LUNA_CODEX_BIN: 'x.js' });
+  assert.equal(custom.settingsPath, 'C:\\custom.yml');
 });

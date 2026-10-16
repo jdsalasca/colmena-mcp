@@ -42,6 +42,7 @@ export function getConfig(env = process.env) {
   const settings = loadSettings(home, env);
   const config = {
     home,
+    settingsPath: env.COLMENA_CONFIG || path.join(home, 'colmena.yml'),
     jobsDir: path.join(home, 'jobs'),
     worktreesDir: path.join(home, 'worktrees'),
     reportsDir: path.join(home, 'reports'),

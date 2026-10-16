@@ -6,6 +6,9 @@
 # Si omites `preamble`, se usa el estándar español integrado (TDD, DRY, reutilización, evidencia y reporte).
 # `providers.opencode.isolate_config` separa OpenCode de los MCP, plugins y agentes globales del usuario.
 
+preferences:
+  provider: auto                # codex | opencode; cámbialo en caliente si quieres priorizar otro proveedor
+
 workers:
   luna-max:
     provider: codex            # codex | opencode

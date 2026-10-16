@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events';
 import { startRun } from './runner.js';
 import { getAdapter } from './providers/index.js';
 import { createLedger } from './ledger.js';
-import { pickWorker, workerStatus } from './router.js';
+import { chooseWorker, workerStatus } from './router.js';
 import { buildPrompt, parseReport } from './report.js';
 import * as iso from './isolation.js';
 
@@ -54,7 +54,8 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
   function submit(spec) {
     const handoffTexts = (spec.handoff ?? []).map(summaryText);
     if (spec.worker) resolveWorker(spec.worker); // unknown/disabled → clear error before touching anything
-    const worker = resolveWorker(pickWorker(config.settings, ledger, { worker: spec.worker, kind: spec.taskKind }));
+    const selection = chooseWorker(config.settings, ledger, { worker: spec.worker, kind: spec.taskKind });
+    const worker = resolveWorker(selection.alias);
     const cwd = spec.cwd ?? process.cwd();
     const id = store.newId();
     const ws = spec.workspace ?? iso.prepare(config, { cwd, isolation: spec.isolation ?? 'inplace', id });
@@ -67,7 +68,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
       isolation: spec.workspace ? 'reuse' : (spec.isolation ?? 'inplace'),
       workdir: ws.workdir, branch: ws.branch, base: ws.base, readonly: ws.readonly, warning: ws.warning,
       parentId: spec.parentId, resumeSessionId: spec.resumeSessionId, ephemeral: !!spec.ephemeral,
-      worker: worker.name, provider: worker.provider,
+      worker: worker.name, provider: worker.provider, note: selection.note,
       owner: process.pid, createdAt: Date.now(),
     });
     store.audit({ id, kind, worker: worker.name, cwd, isolation: spec.isolation, briefHash: crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 12) });
@@ -136,7 +137,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
   function status(id) {
     const m = need(id);
     const end = m.endedAt ?? Date.now();
-    return { id, state: m.state, kind: m.kind, worker: m.worker, elapsedS: Math.round((end - (m.startedAt ?? m.createdAt)) / 1000), task: (m.task ?? '').slice(0, 80), ...(m.branch ? { branch: m.branch } : {}) };
+    return { id, state: m.state, kind: m.kind, worker: m.worker, elapsedS: Math.round((end - (m.startedAt ?? m.createdAt)) / 1000), task: (m.task ?? '').slice(0, 80), ...(m.branch ? { branch: m.branch } : {}), ...(m.note ? { note: m.note } : {}) };
   }
 
   function result(id, { detail = 'min' } = {}) {
@@ -144,6 +145,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     if (!TERMINAL.has(m.state)) return status(id);
     const text = lastMessage(id) ?? '';
     const out = { id, state: m.state, kind: m.kind, worker: m.worker, cost_usd: Number((m.costUsd ?? 0).toFixed(4)) };
+    if (m.note) out.note = m.note;
     if (m.kind === 'run' || m.kind === 'review') {
       const rep = parseReport(text);
       out.reportOk = rep.ok;
@@ -243,7 +245,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
   }
 
   return {
-    bus, resolveWorker, workers: () => workerStatus(config.settings, ledger),
+    bus, resolveWorker, routeWorker: spec => chooseWorker(config.settings, ledger, spec), workers: () => workerStatus(config.settings, ledger),
     submit, status, result, wait, cancel, continueJob, summarize, compact, review, recoverOrphans,
     list: f => store.list(f ?? {}).map(m => status(m.id)),
     metas: () => store.list({}),

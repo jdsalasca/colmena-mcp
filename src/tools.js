@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import YAML from 'yaml';
 import { createJobManager } from './jobs.js';
 import * as iso from './isolation.js';
 import { notifyPlugin } from './plugins/notify.js';
@@ -37,15 +39,36 @@ function settingsDiff(before, after) {
       .filter(worker => worker.fields.length),
     roles: changedFields(before.roles, after.roles),
     defaults: changedFields(before.defaults, after.defaults),
+    preferences: changedFields(before.preferences, after.preferences),
     providers: changedFields(before.providers, after.providers),
     plugins: changedFields(before.plugins, after.plugins),
   };
 }
 
+function persistPreference(config, provider) {
+  const file = config.settingsPath ?? path.join(config.home, 'colmena.yml');
+  const exists = fs.existsSync(file);
+  const document = exists
+    ? YAML.parseDocument(fs.readFileSync(file, 'utf8'))
+    : new YAML.Document({});
+  if (document.errors.length) throw new Error(`no se pudo actualizar preferences en ${file}: ${document.errors[0].message}`);
+  if (document.contents == null) document.contents = {};
+  document.setIn(['preferences', 'provider'], provider);
+
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporary, document.toString(), { encoding: 'utf8', flag: 'wx' });
+    fs.renameSync(temporary, file);
+  } finally {
+    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+  }
+}
+
 const taskShape = {
   task: z.string().min(1).describe('Brief claro y autocontenido: objetivo, archivos, criterio de aceptación. El agente no ve esta conversación.'),
   cwd: z.string().optional().describe('Directorio del proyecto (defecto: cwd del servidor)'),
-  worker: z.string().optional().describe('Alias de worker de colmena.yml (ver tool workers). Si se omite, el router elige: defaults.worker o el siguiente con presupuesto'),
+  worker: z.string().optional().describe('Alias de worker de colmena.yml (ver tool workers). Si se omite, respeta preferences.provider y aplica kind, defaults.worker compatible y prioridad'),
   kind: z.string().optional().describe('Tipo de tarea (code, docs, refactor, tests...) para que el router prefiera workers con esa fortaleza'),
   isolation: isolationEnum,
   context_files: z.array(z.string()).optional().describe('Rutas que el agente debe leer primero'),
@@ -70,7 +93,22 @@ export function buildServer(config) {
   };
   const terminalMeta = id => { const m = jm.meta(id); if (!TERMINAL.has(m.state)) throw new Error(`job ${id} sigue ${m.state}`); return m; };
 
-  tool('workers', 'Lista los workers de colmena.yml con prioridad, fortalezas, gasto del mes, presupuesto restante y disponibilidad. Úsalo para decidir a quién delegar.', {}, () => jm.workers());
+  tool('workers', 'Lista los workers de colmena.yml con prioridad, fortalezas, preferencia, gasto del mes, presupuesto restante y disponibilidad. Úsalo para decidir a quién delegar.', {}, () => jm.workers());
+
+  tool('preferences', 'Consulta o cambia en caliente el proveedor preferido por el router y guarda el cambio en el archivo de configuración.',
+    { provider: z.enum(['auto', 'codex', 'opencode']).optional().describe('auto conserva el ruteo actual; codex u opencode priorizan ese proveedor') },
+    ({ provider }) => {
+      if (provider !== undefined) {
+        persistPreference(config, provider);
+        config.settings = { ...config.settings, preferences: { provider } };
+      }
+      const selection = jm.routeWorker();
+      return {
+        provider: config.settings.preferences.provider,
+        worker: selection.alias,
+        ...(selection.note ? { note: selection.note } : {}),
+      };
+    });
 
   const reportTool = tool('report', 'Genera un reporte HTML bonito de lo logrado por los jobs indicados (ronda final). El worker del rol reporter lo redacta con el estilo elegido (defecto papercraft); si falla, se usa un renderizador de respaldo. Devuelve la ruta del HTML.',
     { job_ids: z.array(z.string()).min(1), style: z.string().optional().describe('Nombre de estilo (carpeta styles/<nombre>); defecto: plugins.report.default_style'), title: z.string().optional(), subtitle: z.string().optional(), open: z.boolean().optional().describe('Abrir en el navegador al terminar') },
@@ -108,7 +146,7 @@ export function buildServer(config) {
     return settingsDiff(previous, next);
   });
 
-  tool('run', 'Lanza un agente obrero (Codex u OpenCode según el worker; sin aprobaciones, con internet). Devuelve job_id; con wait=true espera el reporte (hasta timeout_s).',
+  tool('run', 'Lanza un agente obrero (según proveedor preferido, disponibilidad, kind y prioridad; worker explícito siempre manda). Devuelve job_id; con wait=true espera el reporte (hasta timeout_s).',
     { ...taskShape, wait: z.boolean().optional(), timeout_s: z.number().optional() },
     async a => {
       const id = jm.submit(toSpec(a));
