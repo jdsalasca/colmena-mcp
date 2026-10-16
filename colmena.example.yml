@@ -55,6 +55,9 @@ plugins:
   report:
     enabled: true
     default_style: papercraft
+  improve:
+    enabled: true      # tool `improve`, prompt MCP continuous-improvement e invitaciones
+    hints: true        # next en report / hint en wait; false los silencia sin ocultar la tool
 
 standards:
   enabled: true
