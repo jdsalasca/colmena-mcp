@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { getConfig } from '../src/config.js';
-import { attachRun, startRun } from '../src/runner.js';
+import { attachRun, startRun, tail } from '../src/runner.js';
 import { getAdapter } from '../src/providers/index.js';
 import { fakeCodex, fakeOpencode, tmp } from './helpers.js';
 
@@ -127,6 +127,28 @@ test('startRun merges optional env into the child process environment', async ()
     if (previous === undefined) delete process.env.COLMENA_RUNNER_INHERITED;
     else process.env.COLMENA_RUNNER_INHERITED = previous;
   }
+});
+test('tail: archivo grande se resume sin leerlo completo', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-tail-'));
+  const file = path.join(dir, 'stderr.log');
+  const lines = Array.from({ length: 200000 }, (_, i) => `line ${i}`).join('\\n') + '\\nFINAL TAIL LINE\\n';
+  fs.writeFileSync(file, lines);
+  const original = fs.readFileSync;
+  fs.readFileSync = () => { throw new Error('tail no debe usar readFileSync'); };
+  try {
+    const out = tail(file);
+    assert.match(out, /FINAL TAIL LINE/);
+    assert.ok(out.split('\n').length <= 20);
+  } finally {
+    fs.readFileSync = original;
+  }
+});
+test('tail: archivo ausente o vacío devuelve cadena vacía', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-tail-'));
+  assert.equal(tail(path.join(dir, 'nope.log')), '');
+  const empty = path.join(dir, 'empty.log');
+  fs.writeFileSync(empty, '');
+  assert.equal(tail(empty), '');
 });
 test('startRun FAIL → code 1 + stderr tail', async () => {
   const c = cfg(); const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'colmena-w-'));

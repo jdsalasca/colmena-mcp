@@ -8,9 +8,32 @@ export function isProcessAlive(pid) {
   catch (error) { return error.code === 'EPERM'; }
 }
 
-function tail(file) {
-  try { return fs.readFileSync(file, 'utf8').slice(-8000).split('\n').filter(Boolean).slice(-20).join('\n'); }
-  catch { return ''; }
+const TAIL_BYTES = 8000;
+const TAIL_LINES = 20;
+const READ_CHUNK = TAIL_BYTES * 4;
+
+export function tail(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size;
+    if (!size) return '';
+    const toRead = Math.min(size, READ_CHUNK);
+    const start = size - toRead;
+    const buf = Buffer.allocUnsafe(toRead);
+    let read = 0;
+    while (read < toRead) {
+      const n = fs.readSync(fd, buf, read, toRead - read, start + read);
+      if (!n) break;
+      read += n;
+    }
+    const text = buf.subarray(0, read).toString('utf8');
+    return text.slice(-TAIL_BYTES).split('\n').filter(Boolean).slice(-TAIL_LINES).join('\n');
+  } catch {
+    return '';
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+  }
 }
 
 function killTree(pid) {
