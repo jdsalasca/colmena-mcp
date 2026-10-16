@@ -100,6 +100,27 @@ test('title with spaces and accents → safe folder, file exists', async () => {
   assert.ok(fs.existsSync(r.path));
   assert.ok(!/[:"<>|?*]/.test(path.basename(path.dirname(r.path))));
 });
+test('MC-7: data.json y report.html de respaldo se publican atómicamente: rename fallido conserva lo previo y no deja .tmp', async () => {
+  const { jm, config, ids } = await setup();
+  const first = await generateReport({ jm, config, ids, title: 'Ronda atómica' });
+  const dataPath = path.join(first.dir, 'data.json');
+  const prevData = fs.readFileSync(dataPath, 'utf8');
+  const prevReport = fs.readFileSync(first.path, 'utf8');
+  await withEnv('FAKE_REPORT', 'skip', async () => {
+    await assert.rejects(
+      generateReport({ jm, config, ids, title: 'Ronda atómica', atomicWriteDependencies: { renameSync: () => { throw new Error('rename falló'); } } }),
+      /rename falló/,
+    );
+  });
+  assert.equal(fs.readFileSync(dataPath, 'utf8'), prevData);
+  assert.equal(fs.readFileSync(first.path, 'utf8'), prevReport);
+  const leftovers = fs.readdirSync(config.reportsDir).flatMap(d => {
+    const full = path.join(config.reportsDir, d);
+    return fs.statSync(full).isDirectory() ? fs.readdirSync(full) : [];
+  });
+  assert.ok(leftovers.every(f => !f.includes('.tmp')), `temporales residuales: ${leftovers}`);
+});
+
 test('built-in papercraft template fills every placeholder', async () => {
   const { jm, ids } = await setup();
   const d = buildReportData(jm, ids, { title: 'Prueba', subtitle: 'sub' });

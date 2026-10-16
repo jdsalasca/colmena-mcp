@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { improveNext } from './improve.js';
 import { jobMetrics } from '../job-metrics.js';
+import { writeFileAtomic } from '../atomic-write.js';
 
 const BUILTIN_STYLES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'styles');
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
@@ -100,7 +101,7 @@ function nextSuggestions(jm, ids, config) {
   return suggestions;
 }
 
-export async function generateReport({ jm, config, ids, style, title, subtitle, open = false }) {
+export async function generateReport({ jm, config, ids, style, title, subtitle, open = false, atomicWriteDependencies } = {}) {
   if (!ids?.length) throw new Error('indica al menos un job_id');
   const styleName = style ?? config.settings.plugins.report.default_style;
   const styleDir = resolveStyle(config, styleName, { marker: '<!--COLMENA:CARDS-->' });
@@ -110,7 +111,7 @@ export async function generateReport({ jm, config, ids, style, title, subtitle, 
   let dir = path.join(config.reportsDir, `${stamp}-${slugify(data.title)}`);
   for (let n = 2; fs.existsSync(dir); n++) dir = path.join(config.reportsDir, `${stamp}-${slugify(data.title)}-${n}`);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'data.json'), JSON.stringify(data, null, 2));
+  writeFileAtomic(path.join(dir, 'data.json'), JSON.stringify(data, null, 2), atomicWriteDependencies);
 
   const out = path.join(dir, 'report.html');
   let reporterJob = null; let cost = 0; let reporterError = null;
@@ -126,7 +127,7 @@ export async function generateReport({ jm, config, ids, style, title, subtitle, 
 
   const valid = () => { try { const t = fs.readFileSync(out, 'utf8'); return t.length > 500 && /<html/i.test(t); } catch { return false; } };
   let usedFallback = false;
-  if (!valid()) { fs.writeFileSync(out, renderFallback(data, styleDir)); usedFallback = true; }
+  if (!valid()) { writeFileAtomic(out, renderFallback(data, styleDir), atomicWriteDependencies); usedFallback = true; }
 
   if (open && process.platform === 'win32') { try { spawn('explorer.exe', [out], { detached: true, stdio: 'ignore' }).unref(); } catch { /* best-effort */ } }
   const next = nextSuggestions(jm, ids, config);

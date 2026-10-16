@@ -93,6 +93,27 @@ test('unknown style lists available styles; accented title makes a safe folder',
   assert.ok(!/[<>:"|?*]/.test(path.basename(result.dir)));
 });
 
+test('MC-7: data.json y deck.html de respaldo se publican atómicamente: rename fallido conserva lo previo y no deja .tmp', async () => {
+  const { config, jm, ids } = await setup();
+  const first = await generatePresentation({ jm, config, ids, title: 'Hito atómico' });
+  const dataPath = path.join(first.dir, 'data.json');
+  const prevData = fs.readFileSync(dataPath, 'utf8');
+  const prevDeck = fs.readFileSync(first.path, 'utf8');
+  await withEnv('FAKE_PRESENT', 'skip', async () => {
+    await assert.rejects(
+      generatePresentation({ jm, config, ids, title: 'Hito atómico', atomicWriteDependencies: { renameSync: () => { throw new Error('rename falló'); } } }),
+      /rename falló/,
+    );
+  });
+  assert.equal(fs.readFileSync(dataPath, 'utf8'), prevData);
+  assert.equal(fs.readFileSync(first.path, 'utf8'), prevDeck);
+  const leftovers = fs.readdirSync(config.reportsDir).flatMap(d => {
+    const full = path.join(config.reportsDir, d);
+    return fs.statSync(full).isDirectory() ? fs.readdirSync(full) : [];
+  });
+  assert.ok(leftovers.every(f => !f.includes('.tmp')), `temporales residuales: ${leftovers}`);
+});
+
 test('report and presentation reject templates for the other output format', async () => {
   const { config, jm, ids } = await setup();
   await assert.rejects(generateReport({ jm, config, ids, style: 'papercraft-deck' }), /estilo 'papercraft-deck'.*papercraft/);
