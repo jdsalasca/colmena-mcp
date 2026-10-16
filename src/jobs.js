@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createStore } from './store.js';
 import { EventEmitter } from 'node:events';
-import { startRun } from './runner.js';
+import { attachRun, isProcessAlive, startRun } from './runner.js';
 import { getAdapter } from './providers/index.js';
 import { createLedger } from './ledger.js';
 import { chooseWorker, workerStatus } from './router.js';
@@ -13,7 +13,7 @@ import { writeFileAtomic } from './atomic-write.js';
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
 const RETRY_WINDOW_MS = 30_000;
-const alive = pid => { if (!pid) return false; try { process.kill(pid, 0); return true; } catch { return false; } };
+const CHECKPOINT_MS = 1000;
 
 export function createJobManager(config, { bus = new EventEmitter(), writeArtifact = writeFileAtomic } = {}) {
   const store = createStore(config);
@@ -45,6 +45,17 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
   const readFile = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
   const lastMessage = id => readFile(path.join(store.jobDir(id), 'last_message.md'));
   const need = id => { const m = store.get(id); if (!m) throw new Error(`job ${id} no existe`); return m; };
+  const persistText = (file, text) => {
+    try { writeArtifact(file, text); } catch { /* artifacts must never break the job */ }
+  };
+  function ensureFinished(id) {
+    if (!finished.has(id)) {
+      let resolve;
+      const promise = new Promise(r => { resolve = r; });
+      finished.set(id, { promise, resolve });
+    }
+    return finished.get(id);
+  }
 
   function summaryText(id) {
     need(id);
@@ -71,11 +82,12 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
       workdir: ws.workdir, branch: ws.branch, base: ws.base, readonly: ws.readonly, warning: ws.warning,
       parentId: spec.parentId, resumeSessionId: spec.resumeSessionId, ephemeral: !!spec.ephemeral,
       worker: worker.name, provider: worker.provider, model: worker.model, effort: worker.effort ?? null, note: selection.note,
+      workerConfig: { ...worker }, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS,
       owner: process.pid, createdAt: Date.now(),
     });
+    fs.writeFileSync(path.join(store.jobDir(id), 'prompt.txt'), prompt);
     store.audit({ id, kind, worker: worker.name, cwd, isolation: spec.isolation, briefHash: crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 12) });
-    let resolve; const promise = new Promise(r => { resolve = r; });
-    finished.set(id, { promise, resolve });
+    ensureFinished(id);
     queue.push({ id, prompt, worker, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS });
     pump();
     return id;
@@ -87,97 +99,187 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
   }
 
   function start({ id, prompt, worker, timeoutMin, exitGraceS }) {
-    const meta = store.update(id, { state: 'running', startedAt: Date.now(), retries: 0 });
+    const meta = store.update(id, { state: 'running', startedAt: Date.now(), timeoutMin, exitGraceS, logOffset: 0, usage: {}, retries: 0 });
     const dir = store.jobDir(id);
-    const state = { cancelled: false, timedOut: false, delivered: false, hasFinalMessage: false, finishedByGrace: false, timer: null, graceTimer: null, handle: null };
-    live.set(id, state);
-    maxSeen = Math.max(maxSeen, live.size);
-    // Usage and lastText accumulate per job: a transient retry keeps what the failed attempt already spent and appends to the same events log.
-    let usage = {}; let lastText = '';
-    let retries = 0;
-    const retryLimit = config.retryTransient;
     const adapter = getAdapter(worker.provider);
+    monitor(id, meta, worker, adapter, options => startRun(adapter.cmd(config), adapter.buildArgs({
+      prompt, workdir: meta.workdir, lastMessagePath: path.join(dir, 'last_message.md'),
+      readonly: meta.readonly, resumeSessionId: meta.resumeSessionId, ephemeral: meta.ephemeral, worker,
+    }), {
+      cwd: meta.workdir, logPath: path.join(dir, 'events.jsonl'), stderrPath: path.join(dir, 'stderr.log'),
+      parseLine: adapter.parseLine, env: adapter.env?.(config), ...options,
+    }));
+    fs.rmSync(path.join(dir, 'prompt.txt'), { force: true });
+  }
+
+  function monitor(id, meta, worker, adapter, openHandle, { adopted = false } = {}) {
+    const dir = store.jobDir(id);
+    const savedText = lastMessage(id) ?? '';
+    const state = {
+      cancelled: !!meta.cancelRequested, timedOut: !!meta.timedOut, delivered: !!meta.delivered,
+      hasFinalMessage: !!meta.hasFinalMessage || !!savedText, finishedByGrace: !!meta.finishedByGrace,
+      message: meta.message, deliveredAt: meta.deliveredAt, lastText: savedText,
+      usage: { ...(meta.usage ?? {}) }, logOffset: meta.logOffset ?? 0,
+      adopted, timer: null, graceTimer: null, checkpointTimer: null, dirty: false, handle: null,
+    };
+    let lastSessionId = meta.sessionId;
+    // A transient retry reuses the same job: the attempt appends to events.jsonl and the polling reader resumes at the saved offset.
+    let retries = meta.retries ?? 0;
+    let attemptError = null;
+    let attemptStartedAt = Date.now();
+    const retryLimit = config.retryTransient;
+    const timeoutMin = meta.timeoutMin ?? config.timeoutMin;
+    const exitGraceS = meta.exitGraceS ?? config.exitGraceS;
+
     const finishByGrace = message => {
       if (state.finishedByGrace) return;
       state.finishedByGrace = true;
       state.message = message;
+      store.update(id, { finishedByGrace: true, message });
       clearTimeout(state.graceTimer);
       state.handle.kill();
     };
-    const attempt = () => {
-      lastText = '';
-      state.hasFinalMessage = false;
-      state.delivered = false;
-      const attemptStartedAt = Date.now();
-      let attemptError; let lastSessionId;
-      const handle = startRun(adapter.cmd(config), adapter.buildArgs({
-        prompt, workdir: meta.workdir, lastMessagePath: path.join(dir, 'last_message.md'),
-        readonly: meta.readonly, resumeSessionId: meta.resumeSessionId, ephemeral: meta.ephemeral, worker,
-      }), {
-        cwd: meta.workdir, logPath: path.join(dir, 'events.jsonl'), parseLine: adapter.parseLine,
-        env: adapter.env?.(config),
-        onEvent: e => {
-          if (e.kind === 'session' && e.sessionId !== lastSessionId) { lastSessionId = e.sessionId; store.update(id, { sessionId: e.sessionId }); }
-          else if (e.kind === 'message') { lastText = e.text; state.hasFinalMessage = true; }
-          else if (e.kind === 'error') { attemptError = e; state.lastProviderError = e; }
-          else if (e.kind === 'usage') {
-            for (const [k, v] of Object.entries(e.usage)) if (typeof v === 'number') usage[k] = (usage[k] ?? 0) + v;
-            if (!state.delivered && state.hasFinalMessage && adapter.completesOn?.(e)) {
-              state.delivered = true;
-              state.graceTimer = setTimeout(() => finishByGrace(
-                `El agente entregó su respuesta, pero el proceso no terminó dentro de la gracia de ${exitGraceS} s y fue finalizado.`,
-              ), exitGraceS * 1000);
-            }
-          }
-        },
+    const scheduleGrace = () => {
+      const elapsed = Date.now() - (state.deliveredAt ?? Date.now());
+      const remaining = Math.max(0, exitGraceS * 1000 - elapsed);
+      state.graceTimer = setTimeout(() => finishByGrace(
+        `El agente entregó su respuesta, pero el proceso no terminó dentro de la gracia de ${exitGraceS} s y fue finalizado.`,
+      ), remaining);
+    };
+    const checkpoint = () => ({
+      logOffset: state.logOffset,
+      usage: { ...state.usage },
+      hasFinalMessage: state.hasFinalMessage,
+      ...(state.delivered ? { delivered: true, deliveredAt: state.deliveredAt } : {}),
+    });
+    const flushCheckpoint = () => {
+      clearTimeout(state.checkpointTimer);
+      state.checkpointTimer = null;
+      if (!state.dirty) return;
+      store.update(id, checkpoint());
+      state.dirty = false;
+    };
+    const scheduleCheckpoint = () => {
+      state.dirty = true;
+      state.checkpointTimer ??= setTimeout(flushCheckpoint, CHECKPOINT_MS);
+      state.checkpointTimer.unref?.();
+    };
+    const onEvent = (event, logOffset) => {
+      state.logOffset = logOffset;
+      if (event.kind === 'session' && event.sessionId !== lastSessionId) {
+        lastSessionId = event.sessionId;
+        clearTimeout(state.checkpointTimer);
+        state.checkpointTimer = null;
+        store.update(id, { ...checkpoint(), sessionId: event.sessionId });
+        state.dirty = false;
+      } else if (event.kind === 'message') {
+        state.lastText = event.text;
+        state.hasFinalMessage = true;
+        persistText(path.join(dir, 'last_message.md'), event.text);
+      } else if (event.kind === 'error') {
+        attemptError = event;
+        state.lastProviderError = event;
+        scheduleCheckpoint();
+      } else if (event.kind === 'usage') {
+        for (const [key, value] of Object.entries(event.usage)) {
+          if (typeof value === 'number') state.usage[key] = (state.usage[key] ?? 0) + value;
+        }
+        if (!state.delivered && state.hasFinalMessage && adapter.completesOn?.(event)) {
+          state.delivered = true;
+          state.deliveredAt = Date.now();
+          clearTimeout(state.checkpointTimer);
+          state.checkpointTimer = null;
+          store.update(id, checkpoint());
+          state.dirty = false;
+          scheduleGrace();
+        } else scheduleCheckpoint();
+      } else scheduleCheckpoint();
+      if (event.kind === 'session' && event.sessionId === lastSessionId && state.dirty) {
+        scheduleCheckpoint();
+      }
+    };
+    const onOffset = logOffset => { state.logOffset = logOffset; scheduleCheckpoint(); };
+
+    const onTimeout = () => {
+      if (state.delivered) finishByGrace('El agente ya había entregado su respuesta al alcanzar el timeout general; el proceso fue finalizado y el job se marcó done.');
+      else {
+        state.timedOut = true;
+        store.update(id, { timedOut: true });
+        state.handle.kill();
+      }
+    };
+
+    const beginAttempt = () => {
+      attemptStartedAt = Date.now();
+      attemptError = null;
+      state.handle = openHandle({
+        onEvent, onOffset,
+        offset: state.logOffset,
+        isDelivered: () => state.delivered || (meta.provider === 'opencode' && parseReport(state.lastText).ok),
       });
-      state.handle = handle;
-      store.update(id, { pid: handle.pid });
+      store.update(id, { owner: process.pid, pid: state.handle.pid, ...(adopted ? { adopted: true } : {}) });
       clearTimeout(state.timer);
-      state.timer = setTimeout(() => {
-        if (state.delivered) finishByGrace('El agente ya había entregado su respuesta al alcanzar el timeout general; el proceso fue finalizado y el job se marcó done.');
-        else { state.timedOut = true; handle.kill(); }
-      }, timeoutMin * 60000);
-      handle.done.then(r => {
-        const fastTransient = r.code !== 0 && Date.now() - attemptStartedAt < RETRY_WINDOW_MS && attemptError?.retryable === true;
+      state.timer = setTimeout(onTimeout, Math.max(0, timeoutMin * 60000 - (Date.now() - (meta.startedAt ?? Date.now()))));
+      if (state.finishedByGrace) state.handle.kill();
+      else if (state.delivered) scheduleGrace();
+      else if (state.timedOut || state.cancelled) state.handle.kill();
+      state.handle.done.then(result => {
+        clearTimeout(state.checkpointTimer);
+        state.checkpointTimer = null;
+        const fastTransient = result.code !== 0 && Date.now() - attemptStartedAt < RETRY_WINDOW_MS && attemptError?.retryable === true;
         if (fastTransient && !state.cancelled && !state.timedOut && !state.finishedByGrace && retries < retryLimit) {
           retries += 1;
-          store.update(id, { retries });
-          attempt();
+          state.delivered = false;
+          state.deliveredAt = null;
+          state.hasFinalMessage = false;
+          state.lastText = '';
+          clearTimeout(state.graceTimer);
+          flushCheckpoint();
+          store.update(id, { retries, delivered: false, deliveredAt: null, hasFinalMessage: false });
+          beginAttempt();
           return;
         }
-        finalize(id, meta, state, r, lastText, usage, worker, timeoutMin);
+        finalize(id, meta, state, result, worker, timeoutMin);
       });
     };
-    bus.emit('job.started', { id, worker: meta.worker, provider: meta.provider ?? 'desconocido', task: meta.task, kind: meta.kind });
-    attempt();
+
+    ensureFinished(id);
+    live.set(id, state);
+    maxSeen = Math.max(maxSeen, live.size);
+    state.flushCheckpoint = flushCheckpoint;
+    bus.emit('job.started', { id, worker: meta.worker, provider: meta.provider ?? 'desconocido', task: meta.task, kind: meta.kind, ...(adopted ? { adopted: true } : {}) });
+    beginAttempt();
   }
 
-  function finalize(id, meta, state, r, lastText, usage, worker, timeoutMin) {
+  function finalize(id, meta, state, r, worker, timeoutMin) {
     clearTimeout(state.timer);
     clearTimeout(state.graceTimer);
     live.delete(id);
     const dir = store.jobDir(id);
     let text = lastMessage(id);
-    if (text == null && lastText) { text = lastText; writeArtifact(path.join(dir, 'last_message.md'), text); }
-    let patch = { endedAt: Date.now(), usage };
+    if (text == null && state.lastText) { text = state.lastText; persistText(path.join(dir, 'last_message.md'), text); }
+    let patch = {
+      endedAt: Date.now(), logOffset: state.logOffset, usage: { ...state.usage }, hasFinalMessage: state.hasFinalMessage,
+      ...(state.delivered ? { delivered: true, deliveredAt: state.deliveredAt } : {}),
+    };
     if (state.cancelled) patch.state = 'cancelled';
     else if (state.finishedByGrace) Object.assign(patch, { state: 'done', finishedByGrace: true, message: state.message });
     else if (state.timedOut) Object.assign(patch, { state: 'failed', error: `timeout tras ${timeoutMin} min` });
     else if (r.code === 0) patch.state = 'done';
+    else if (state.adopted && r.code == null) Object.assign(patch, { state: 'orphaned', error: `el proceso terminó sin una entrega confirmada${r.stderrTail ? `: ${r.stderrTail}` : ''}`.slice(0, 1500) });
     else Object.assign(patch, {
       state: 'failed',
       error: `${meta.provider ?? 'agente'} salió con código ${r.code}: ${r.stderrTail || state.lastProviderError?.message || ''}`.slice(0, 1500),
     });
-    if (patch.state === 'done' && meta.kind === 'compact' && meta.parentId && text) writeArtifact(path.join(store.jobDir(meta.parentId), 'summary.md'), text);
+    if (patch.state === 'done' && meta.kind === 'compact' && meta.parentId && text) persistText(path.join(store.jobDir(meta.parentId), 'summary.md'), text);
     if (meta.kind === 'run' && !meta.readonly) {
       try { const ch = iso.changes(meta.workdir, meta.base); patch.files = ch.files; patch.diffstat = ch.diffstat; } catch {}
     }
-    patch.nominalCostUsd = costOf(worker, usage);
+    patch.nominalCostUsd = costOf(worker, state.usage);
     patch.costUsd = worker.free ? 0 : patch.nominalCostUsd;
-    try { ledger.record(meta.worker, usage, patch.costUsd); } catch { /* bookkeeping must never break a job */ }
+    try { ledger.record(meta.worker, state.usage, patch.costUsd); } catch { /* bookkeeping must never break a job */ }
     const updated = store.update(id, patch);
-    bus.emit('job.finished', { id, worker: meta.worker, provider: meta.provider ?? 'desconocido', kind: meta.kind, state: updated.state, task: meta.task, error: updated.error, ...(updated.message ? { message: updated.message } : {}), costUsd: patch.costUsd, usage, startedAt: updated.startedAt, endedAt: updated.endedAt });
+    bus.emit('job.finished', { id, worker: meta.worker, provider: meta.provider ?? 'desconocido', kind: meta.kind, state: updated.state, task: meta.task, error: updated.error, ...(updated.message ? { message: updated.message } : {}), costUsd: patch.costUsd, usage: state.usage, startedAt: updated.startedAt, endedAt: updated.endedAt });
     finished.get(id)?.resolve();
     pump();
   }
@@ -240,11 +342,12 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     if (qi >= 0) {
       queue.splice(qi, 1);
       store.update(id, { state: 'cancelled', endedAt: Date.now() });
+      fs.rmSync(path.join(store.jobDir(id), 'prompt.txt'), { force: true });
       finished.get(id)?.resolve();
       return status(id);
     }
     const l = live.get(id);
-    if (l) { l.cancelled = true; await l.handle.kill(); }
+    if (l) { l.cancelled = true; store.update(id, { cancelRequested: true }); await l.handle.kill(); }
     return status(id);
   }
 
@@ -293,16 +396,65 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
 
   function recoverOrphans() {
     for (const m of store.list({})) {
-      if ((m.state === 'running' || m.state === 'queued') && !live.has(m.id) && !alive(m.owner)) {
-        if (alive(m.pid) && process.platform === 'win32') { try { process.kill(m.pid); } catch {} }
-        store.update(m.id, { state: 'orphaned', endedAt: Date.now(), error: 'el servidor se reinició mientras corría' });
+      if (!['running', 'queued'].includes(m.state) || live.has(m.id) || isProcessAlive(m.owner)) continue;
+      const dir = store.jobDir(m.id);
+      const promptPath = path.join(dir, 'prompt.txt');
+      const savedPrompt = readFile(promptPath);
+      const worker = m.workerConfig ?? config.settings.workers[m.worker] ?? { provider: m.provider, model: m.model, effort: m.effort };
+      const provider = m.provider ?? worker.provider;
+
+      const markOrphaned = error => {
+        const updated = store.update(m.id, { state: 'orphaned', endedAt: Date.now(), error });
+        bus.emit('job.finished', { id: m.id, worker: m.worker, provider: provider ?? 'desconocido', kind: m.kind, state: updated.state, task: m.task, error: updated.error, endedAt: updated.endedAt });
+      };
+      const getExpectedAdapter = () => {
+        if (worker.provider && provider && worker.provider !== provider) throw new Error('el proveedor guardado no coincide');
+        return getAdapter(provider);
+      };
+
+      if (m.state === 'queued' || (!m.pid && savedPrompt !== null)) {
+        if (savedPrompt === null) {
+          markOrphaned('el servidor se reinició antes de iniciar el job y no se encontró su prompt');
+          continue;
+        }
+        try { getExpectedAdapter(); }
+        catch (error) { markOrphaned(`no se pudo reanudar el job en cola: ${error.message}`); continue; }
+        const started = m.state === 'running';
+        store.update(m.id, {
+          state: 'queued', owner: process.pid, adopted: true,
+          ...(started ? { pid: null, startedAt: null, logOffset: 0, usage: {}, delivered: false, deliveredAt: null, hasFinalMessage: false } : {}),
+        });
+        ensureFinished(m.id);
+        queue.push({ id: m.id, prompt: savedPrompt, worker, timeoutMin: m.timeoutMin ?? config.timeoutMin, exitGraceS: m.exitGraceS ?? config.exitGraceS });
+        continue;
       }
+      let adapter;
+      try {
+        adapter = getExpectedAdapter();
+      } catch (error) { markOrphaned(`no se pudo adoptar el job: ${error.message}`); continue; }
+      const meta = store.update(m.id, { provider, adopted: true, owner: process.pid });
+      monitor(m.id, meta, worker, adapter, options => attachRun({
+        pid: m.pid, logPath: path.join(dir, 'events.jsonl'), stderrPath: path.join(dir, 'stderr.log'),
+        offset: m.logOffset ?? 0, parseLine: adapter.parseLine, ...options,
+      }), { adopted: true });
+      fs.rmSync(promptPath, { force: true });
     }
+    pump();
+  }
+
+  function shutdown() {
+    for (const state of live.values()) {
+      clearTimeout(state.timer);
+      clearTimeout(state.graceTimer);
+      state.flushCheckpoint?.();
+      state.handle.detach?.();
+    }
+    live.clear();
   }
 
   return {
     bus, resolveWorker, routeWorker: spec => chooseWorker(config.settings, ledger, spec), workers: () => workerStatus(config.settings, ledger),
-    submit, status, result, wait, cancel, continueJob, summarize, compact, review, recoverOrphans,
+    submit, status, result, wait, cancel, continueJob, summarize, compact, review, recoverOrphans, shutdown,
     list: f => store.list(f ?? {}).map(m => status(m.id)),
     metas: () => store.list({}),
     meta: id => need(id),

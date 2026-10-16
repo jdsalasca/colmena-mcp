@@ -24,6 +24,7 @@ test('no yml → defaults', () => {
   assert.equal(s.workers['luna-max'].effort, 'max');
   assert.equal(s.defaults.worker, 'luna-max');
   assert.equal(s.defaults.exit_grace_s, 20);
+  assert.equal(s.defaults.cancel_jobs_on_shutdown, false);
   assert.equal(s.roles.reporter, 'ds-flash');
   assert.equal(s.roles.summarizer, 'ds-flash');
   assert.equal(s.roles.presenter, 'luna-max');
@@ -40,6 +41,12 @@ test('no yml → defaults', () => {
   assert.match(s.standards.preamble, /fuente/i);
   assert.match(s.standards.preamble, /No crees archivos de plan, notas, capturas ni temporales dentro del repositorio fuera de los entregables pedidos/);
   assert.deepEqual(DEFAULT_SETTINGS.defaults.max_parallel, 4);
+});
+test('cancel_jobs_on_shutdown is opt-in and validated as a boolean', () => {
+  const { h, env } = withYml('defaults: {worker: luna-max, cancel_jobs_on_shutdown: true}\n');
+  assert.equal(loadSettings(h, env).defaults.cancel_jobs_on_shutdown, true);
+  const invalid = withYml('defaults: {worker: luna-max, cancel_jobs_on_shutdown: "yes"}\n');
+  assert.throws(() => loadSettings(invalid.h, invalid.env), /defaults\.cancel_jobs_on_shutdown/);
 });
 test('workers admiten free y validan que sea booleano', () => {
   const { h, env } = withYml(`

@@ -86,6 +86,8 @@ const mk = () => {
   return { jm: createJobManager(config), config };
 };
 const S = (task, extra = {}) => ({ task, cwd: tmp('colmena-c-'), isolation: 'inplace', ...extra });
+const readEvents = file => fs.readFileSync(file, 'utf8').trim().split('\n')
+  .flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
 
 test('OpenCode job conserva modelo, proveedor y esfuerzo del worker', async () => {
   const { jm } = mk();
@@ -185,6 +187,21 @@ test('transient provider error: one automatic retry in the same job, cost record
   const month = JSON.parse(fs.readFileSync(path.join(config.home, 'usage.json'), 'utf8'))[new Date().toISOString().slice(0, 7)]['ds-flash'];
   assert.equal(month.runs, 1, 'ledger records the job once');
   assert.equal(month.cost_usd, 0.03, 'failed attempt usage is not lost nor double-counted');
+});
+test('decoupled retry: the second attempt appends to events.jsonl and the reader resumes at the saved offset', async () => {
+  const { jm } = mk();
+  const id = jm.submit(S('ERROR_ONCE', { worker: 'ds-flash' }));
+  await jm.wait([id], { timeoutS: 30 });
+  const meta = jm.meta(id);
+  assert.equal(jm.result(id).state, 'done');
+  assert.match(jm.result(id).report.RESULT, /^ok oc/);
+  assert.equal(meta.retries, 1);
+  const logPath = path.join(jm.jobDir(id), 'events.jsonl');
+  const events = readEvents(logPath);
+  assert.equal(events.filter(e => e.type === 'step_start').length, 2, 'both attempts append to the same file-backed log');
+  assert.equal(events.filter(e => e.type === 'text' && String(e.part?.text).startsWith('RESULT: ok oc')).length, 1, 'the resumed reader never reprocesses the failed attempt');
+  assert.equal(meta.usage.cost_usd, 0.03, 'usage accumulates both attempts exactly once');
+  assert.equal(meta.logOffset, fs.statSync(logPath).size, 'the checkpoint consumed the whole appended log');
 });
 test('exhausted transient retry fails with the provider name and the event message', async () => {
   const { jm } = mk();
