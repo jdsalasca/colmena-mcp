@@ -159,7 +159,7 @@ defaults: {worker: a, reserve_usd: 0.2}
   const l = createLedger({ usagePath }, { now: () => new Date('2026-10-16T10:00:00Z') });
   const rows = Object.fromEntries(workerStatus(s, l).map(r => [r.alias, r]));
   assert.equal(rows.a.reserved_usd, 0.9);
-  assert.equal(rows.a.remaining_usd, 0.1);
+  assert.equal(rows.a.remaining_usd, 0, 'el restante descuenta el gasto y las reservas');
   assert.equal(rows.a.available, false);
   assert.equal(rows.borde.reserved_usd, 0.3);
   assert.equal(rows.borde.available, true, 'gasto + reservas + la próxima reserva (0.2) caben justo en el presupuesto');
