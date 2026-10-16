@@ -28,6 +28,7 @@ const Roles = z.object({ reporter: z.string(), summarizer: z.string(), reviewer:
 const Defaults = z.object({
   worker: z.string(), max_parallel: z.number().int().positive().default(4), timeout_min: z.number().positive().default(60),
   exit_grace_s: z.number().positive().default(20), retry_transient: z.number().int().nonnegative().default(1),
+  cancel_jobs_on_shutdown: z.boolean().default(false),
 });
 const Preferences = z.object({ provider: z.enum(['auto', 'codex', 'opencode']).default('auto') });
 const Notify = z.object({
@@ -53,7 +54,7 @@ export const DEFAULT_SETTINGS = {
     'max-hive': { provider: 'opencode', model: 'opencode-go/muse-spark-1.3-contributor', effort: 'high', priority: 9, strengths: ['bulk'], budget: { monthly_usd: 5 } },
   },
   roles: { reporter: 'ds-flash', summarizer: 'ds-flash', reviewer: 'luna-max', presenter: 'luna-max' },
-  defaults: { worker: 'luna-max', max_parallel: 4, timeout_min: 60, exit_grace_s: 20, retry_transient: 1 },
+  defaults: { worker: 'luna-max', max_parallel: 4, timeout_min: 60, exit_grace_s: 20, retry_transient: 1, cancel_jobs_on_shutdown: false },
   preferences: { provider: 'auto' },
   plugins: { notify: {}, report: {}, present: {}, improve: {}, widget: {} },
   standards: { enabled: true, preamble: DEFAULT_STANDARDS_PREAMBLE },
