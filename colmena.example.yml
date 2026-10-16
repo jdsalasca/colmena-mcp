@@ -68,6 +68,8 @@ plugins:
   improve:
     enabled: true      # tool `improve`, prompt MCP continuous-improvement e invitaciones
     hints: true        # next en report / hint en wait; false los silencia sin ocultar la tool
+  widget:
+    enabled: true      # tool MCP `widget {action: start|status|stop}`
 
 standards:
   enabled: true

@@ -32,7 +32,7 @@ async function connect(extraEnv = {}) {
   return { client, call };
 }
 
-const NAMES = ['workers', 'preferences', 'report', 'present', 'reload_config', 'stats', 'improve', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'cancel', 'merge', 'cleanup'];
+const NAMES = ['workers', 'preferences', 'report', 'present', 'reload_config', 'stats', 'improve', 'widget', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'cancel', 'merge', 'cleanup'];
 
 function providerHome({ codexEnabled = true } = {}) {
   const home = tmp('colmena-pref-');
@@ -79,6 +79,72 @@ test('plugins.present.enabled false oculta la tool MCP', async () => {
   try {
     assert.equal((await client.listTools()).tools.some(item => item.name === 'present'), false);
   } finally { await client.close(); }
+});
+
+test('widget MCP solo publica action y plugins.widget.enabled la oculta', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    const widget = (await client.listTools()).tools.find(item => item.name === 'widget');
+    assert.deepEqual(Object.keys(widget.inputSchema.properties), ['action']);
+    assert.equal((await call('widget', { action: 'status' })).state, 'stopped');
+    assert.match((await call('widget', { action: 'restart' })).error, /action/i);
+  } finally { await client.close(); }
+
+  const configPath = path.join(home, 'colmena.yml');
+  fs.writeFileSync(configPath, fs.readFileSync(configPath, 'utf8').replace('  notify: {enabled: false}', '  notify: {enabled: false}\n  widget: {enabled: false}'));
+  const disabled = await connect({ COLMENA_HOME: home });
+  try {
+    assert.equal((await disabled.client.listTools()).tools.some(item => item.name === 'widget'), false);
+  } finally { await disabled.client.close(); }
+});
+
+test('widget MCP despacha start, status y stop con el controlador inyectado', async () => {
+  const home = codexOnlyHome();
+  const executable = path.join(home, 'widget.exe');
+  fs.writeFileSync(executable, 'fake executable');
+  const registry = path.join(home, 'widget-process.json');
+  const processState = { alive: false };
+  const spawnCalls = [];
+  const config = getConfig(baseEnv(home));
+  const { server } = buildServer(config, {
+    widgetDependencies: {
+      executable,
+      handshakeTimeoutMs: 100,
+      pollIntervalMs: 2,
+      spawn: (command, args, options) => {
+        spawnCalls.push({ command, args, options });
+        processState.alive = true;
+        fs.writeFileSync(registry, JSON.stringify({ pid: 4812, executable }));
+        return { pid: 4812, unref() {} };
+      },
+      processControl: {
+        isAlive: async () => processState.alive,
+        executablePath: async () => processState.alive ? executable : undefined,
+        close: async () => { processState.alive = false; },
+      },
+    },
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'widget-test', version: '0' });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const call = async action => {
+    const result = await client.callTool({ name: 'widget', arguments: { action } });
+    return JSON.parse(result.content[0].text);
+  };
+  try {
+    const started = await call('start');
+    assert.equal(started.state, 'running');
+    assert.equal(started.pid, 4812);
+    assert.equal((await call('status')).pid, 4812);
+    assert.equal((await call('stop')).state, 'stopped');
+    assert.equal(spawnCalls.length, 1);
+    assert.equal(fs.existsSync(registry), false);
+  } finally {
+    await client.close();
+    await server.close();
+  }
 });
 
 test('lists all tools; no model/effort knobs', async () => {
