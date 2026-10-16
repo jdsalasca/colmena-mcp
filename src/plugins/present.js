@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { buildReportData, escapeHtml, formatDuration, resolveStyle, slugify } from './report.js';
+import { writeFileAtomic } from '../atomic-write.js';
 
 const PRESENTATION_MIN_BYTES = 600;
 const PRESENTATION_MAX_BYTES = 2_000_000;
@@ -95,7 +96,7 @@ function uniquePresentationDir(config, title) {
   return dir;
 }
 
-export async function generatePresentation({ jm, config, ids, style, title, subtitle, notes, open = false }) {
+export async function generatePresentation({ jm, config, ids, style, title, subtitle, notes, open = false, atomicWriteDependencies } = {}) {
   if (!ids?.length) throw new Error('indica al menos un job_id');
   const styleName = style ?? config.settings.plugins.present.default_style;
   const styleDir = resolveStyle(config, styleName, { marker: '<!--COLMENA:SLIDES-->' });
@@ -103,7 +104,7 @@ export async function generatePresentation({ jm, config, ids, style, title, subt
   const data = { ...reportData, notes: notes ?? '' };
   const dir = uniquePresentationDir(config, data.title);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'data.json'), JSON.stringify(data, null, 2));
+  writeFileAtomic(path.join(dir, 'data.json'), JSON.stringify(data, null, 2), atomicWriteDependencies);
 
   const out = path.join(dir, 'deck.html');
   let presenterJob = null;
@@ -119,7 +120,7 @@ export async function generatePresentation({ jm, config, ids, style, title, subt
   } catch { /* si el agente no puede generar, se conserva el respaldo determinista */ }
 
   const usedFallback = !validPresentation(out);
-  if (usedFallback) fs.writeFileSync(out, renderFallback(data, styleDir));
+  if (usedFallback) writeFileAtomic(out, renderFallback(data, styleDir), atomicWriteDependencies);
   if (open && process.platform === 'win32') {
     try { spawn('explorer.exe', [out], { detached: true, stdio: 'ignore' }).unref(); } catch { /* best-effort */ }
   }
