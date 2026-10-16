@@ -1,6 +1,6 @@
 # Colmena Widget para Windows
 
-Colmena Widget muestra una escena pixel art local con una abeja por job activo. Lee los archivos `jobs/<id>/meta.json` de Colmena; no inicia jobs ni modifica sus metadatos.
+Colmena Widget muestra un pastizal pixel art con una abeja por job activo. Lee los archivos `jobs/<id>/meta.json` de Colmena; no inicia jobs ni modifica sus metadatos. La ventana mide 520 × 240 px (260 × 120 píxeles lógicos a 2×), muestra hasta 12 abejas y señala el excedente con `+N`.
 
 ## Requisitos
 
@@ -25,8 +25,10 @@ La configuración de Cargo aplica `+crt-static` solo al target Windows x64 MSVC.
 Para regenerar la vista previa determinista (izquierda: escena; derecha: hover con tooltip):
 
 ```powershell
-cargo run --example preview -- target/scene-preview.ppm
-magick target/scene-preview.ppm docs/verification/scene-preview.png
+$previewPpm = Join-Path $env:TEMP 'colmena-widget-scene-preview.ppm'
+cargo run --example preview -- $previewPpm
+magick $previewPpm docs/verification/scene-preview.png
+Remove-Item -LiteralPath $previewPpm
 ```
 
 ## Ejecutar
@@ -65,6 +67,8 @@ Se pueden pasar `-ExecutablePath`, `-DesktopPath` y `-StartMenuPath` para usar o
 - [Preview determinista](docs/verification/scene-preview.png): escena sintética renderizada por el compositor; no demuestra transparencia de la ventana de Windows.
 - [Captura del escritorio](docs/verification/desktop-widget.png): captura real alrededor de la ventana, tomada con `System.Drawing.Graphics.CopyFromScreen`.
 
+La preview mide 1040 × 240 px porque compara dos escenas de 520 × 240 px. La preview muestra el hover sintético; la captura de escritorio usa jobs sintéticos dentro de un `COLMENA_HOME` temporal y muestra la escena sobre el wallpaper, no el estado de una instalación real.
+
 El binario debe compilarse localmente; `dist/colmena-widget.exe` no se versiona. `dumpbin` y `llvm-readobj` no estaban disponibles durante esta verificación, así que no se afirma haber inspeccionado la tabla PE de imports. El flag `+crt-static` configura el enlace estático del CRT, mientras DLL de sistema como User32 y GDI siguen siendo dependencias normales de Windows.
 
 ### Comprobación en escritorio — 15 de octubre de 2026
@@ -72,6 +76,10 @@ El binario debe compilarse localmente; `dist/colmena-widget.exe` no se versiona.
 Se ejecutó el release con un `COLMENA_HOME` temporal y jobs sintéticos. La captura conserva transparencia de escritorio y el hover físico muestra worker, tarea, contador `mm:ss` que avanza y costo. Se observaron las transiciones sintéticas a `done` y `failed`; Notepad maximizado cubrió el widget y, al cerrarlo, volvió al escritorio. El HWND reportó `WS_EX_TOOLWINDOW` (`0x80`) sin `WS_EX_APPWINDOW` (`0x40000`) ni `WS_EX_TOPMOST` (`0x8`), por lo que no solicita botón de barra de tareas ni topmost. El arrastre y la salida por menú se ejercitaron con mensajes Win32 publicados a la ventana; la posición guardada sobrevivió al reinicio y el registro de proceso desapareció al salir.
 
 La entrada del cursor físico se verificó para hover. En esta sesión, la entrada física de botones no produjo mensajes observables; el arrastre, menú y salida se verificaron con mensajes Win32 publicados y también tienen pruebas automatizadas sin HWND. La captura no afirma una verificación de clic físico.
+
+### Comprobación visual ronda 5 — 16 de octubre de 2026
+
+Se recompiló `target/release/colmena-widget.exe` y arrancó con un `COLMENA_HOME` temporal; `widget-process.json` registró el PID y la ruta del ejecutable de este worktree. `desktop-widget.png` es una captura `CopyFromScreen` de 640 × 360 px: se ve la ventana de 520 × 240 px sobre el wallpaper, con jobs sintéticos en cola y en ejecución y las transiciones `done`/`failed` activadas durante la toma. `scene-preview.png` muestra estados sintéticos y el tooltip ampliado con worker, tipo, tarea, tiempo y costo. La captura del escritorio no alcanzó a mostrar el tooltip físico.
 
 ## Solución de problemas
 
