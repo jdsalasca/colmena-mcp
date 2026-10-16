@@ -121,11 +121,22 @@ test('a running MCP job survives client close and finishes after server restart'
 test('reload_config can restore cancellation on server shutdown', async () => {
   const home = codexOnlyHome();
   const file = path.join(home, 'colmena.yml');
-  const first = await connect({ COLMENA_HOME: home });
-  const started = await first.call('run', { task: 'SLEEP hasta cerrar el servidor', cwd: tmp('colmena-shutdown-'), isolation: 'inplace' });
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(
     'defaults: {worker: luna-max}',
-    'defaults: {worker: luna-max, cancel_jobs_on_shutdown: true}',
+    'defaults: {worker: luna-max, max_parallel: 1}',
+  ));
+  const first = await connect({ COLMENA_HOME: home });
+  const started = await first.call('run_many', { tasks: [
+    { task: 'SLEEP hasta cerrar el servidor', cwd: tmp('colmena-shutdown-'), isolation: 'inplace' },
+    { task: 'EDIT estaba en cola', cwd: tmp('colmena-queued-shutdown-'), isolation: 'inplace' },
+  ] });
+  const ids = started.map(job => job.job_id);
+  const beforeClose = await first.call('list', {});
+  assert.equal(beforeClose.find(job => job.id === ids[0]).state, 'running');
+  assert.equal(beforeClose.find(job => job.id === ids[1]).state, 'queued');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(
+    'defaults: {worker: luna-max, max_parallel: 1}',
+    'defaults: {worker: luna-max, max_parallel: 1, cancel_jobs_on_shutdown: true}',
   ));
   const diff = await first.call('reload_config', {});
   assert.ok(diff.defaults.includes('cancel_jobs_on_shutdown'));
@@ -133,8 +144,9 @@ test('reload_config can restore cancellation on server shutdown', async () => {
 
   const second = await connect({ COLMENA_HOME: home });
   try {
-    const result = await second.call('result', { job_id: started.job_id });
-    assert.equal(result.state, 'cancelled');
+    const results = await Promise.all(ids.map(job_id => second.call('result', { job_id })));
+    assert.deepEqual(results.map(result => result.state), ['cancelled', 'cancelled']);
+    assert.equal(fs.existsSync(path.join(home, 'jobs', ids[1], 'prompt.txt')), false);
   } finally { await second.client.close(); }
 });
 

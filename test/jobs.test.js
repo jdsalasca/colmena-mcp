@@ -306,6 +306,46 @@ test('an owner that is still alive keeps its running job untouched', () => {
   assert.equal(jm.status(id).state, 'running');
   assert.equal(jm.meta(id).adopted, undefined);
 });
+test('queued jobs are restored after restart and run when an adopted slot opens', async () => {
+  const previousDelay = process.env.FAKE_DELAY;
+  process.env.FAKE_DELAY = '350';
+  let jmA; let jmB; let runningId;
+  try {
+    const home = codexOnlyHome();
+    const env = baseEnv(home, { COLMENA_MAX_PARALLEL: '1' });
+    jmA = createJobManager(getConfig(env));
+    runningId = jmA.submit(S('SLEEP'));
+    const queuedId = jmA.submit(S('EDIT encolado'));
+    assert.equal(jmA.status(queuedId).state, 'queued');
+    await until(() => (jmA.meta(runningId).logOffset ?? 0) > 0, 'running job should persist its first event');
+    assert.ok(fs.existsSync(path.join(jmA.jobDir(queuedId), 'prompt.txt')));
+    jmA.shutdown();
+    jmA.mark(runningId, { owner: Number.MAX_SAFE_INTEGER });
+    jmA.mark(queuedId, { owner: Number.MAX_SAFE_INTEGER });
+
+    jmB = createJobManager(getConfig(env));
+    jmB.recoverOrphans();
+    assert.equal(jmB.status(runningId).state, 'running');
+    assert.equal(jmB.status(queuedId).state, 'queued');
+    assert.equal(jmB.meta(queuedId).adopted, true);
+    assert.ok(fs.existsSync(path.join(jmB.jobDir(queuedId), 'prompt.txt')));
+
+    await jmB.cancel(runningId);
+    await jmB.wait([runningId, queuedId], { timeoutS: 10 });
+    assert.equal(jmB.result(runningId).state, 'cancelled');
+    assert.equal(jmB.result(queuedId).state, 'done');
+    assert.match(jmB.result(queuedId).report.RESULT, /^ok/);
+    assert.equal(fs.existsSync(path.join(jmB.jobDir(queuedId), 'prompt.txt')), false);
+  } finally {
+    if (jmB && runningId) {
+      try { await jmB.cancel(runningId); } catch {}
+      jmB.shutdown();
+    }
+    jmA?.shutdown();
+    if (previousDelay === undefined) delete process.env.FAKE_DELAY;
+    else process.env.FAKE_DELAY = previousDelay;
+  }
+});
 test('cancelling an adopted job kills its detached process tree', async () => {
   const home = codexOnlyHome();
   const env = baseEnv(home);
@@ -343,11 +383,12 @@ test('an adopted job keeps only the timeout remaining since it started', async (
 });
 test('an adopted delivered job resumes its remaining exit grace period', async () => {
   const home = codexOnlyHome();
-  const env = baseEnv(home, { COLMENA_EXIT_GRACE_S: '0.5' });
+  const env = baseEnv(home, { COLMENA_EXIT_GRACE_S: '3' });
   const jmA = createJobManager(getConfig(env));
   const id = jmA.submit(S('LINGER'));
   await until(() => jmA.meta(id).delivered, 'manager A should persist delivery before shutdown');
-  await new Promise(resolve => setTimeout(resolve, 180));
+  const deliveredAt = jmA.meta(id).deliveredAt;
+  await new Promise(resolve => setTimeout(resolve, 2200));
   jmA.shutdown();
   jmA.mark(id, { owner: Number.MAX_SAFE_INTEGER });
 
@@ -357,7 +398,8 @@ test('an adopted delivered job resumes its remaining exit grace period', async (
   await jmB.wait([id], { timeoutS: 5 });
   assert.equal(jmB.result(id).state, 'done');
   assert.equal(jmB.meta(id).finishedByGrace, true);
-  assert.ok(Date.now() - resumedAt < 800, 'the restarted grace timer should use its remaining duration');
+  assert.equal(jmB.meta(id).deliveredAt, deliveredAt);
+  assert.ok(Date.now() - resumedAt < 2200, 'the restarted grace timer should use its remaining duration');
 });
 test('tokens: min result is compact', async () => {
   const { jm } = mk(); const id = jm.submit(S('hola')); await jm.wait([id]);

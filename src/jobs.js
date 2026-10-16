@@ -43,6 +43,14 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
   const readFile = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
   const lastMessage = id => readFile(path.join(store.jobDir(id), 'last_message.md'));
   const need = id => { const m = store.get(id); if (!m) throw new Error(`job ${id} no existe`); return m; };
+  function ensureFinished(id) {
+    if (!finished.has(id)) {
+      let resolve;
+      const promise = new Promise(r => { resolve = r; });
+      finished.set(id, { promise, resolve });
+    }
+    return finished.get(id);
+  }
 
   function summaryText(id) {
     need(id);
@@ -69,11 +77,12 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
       workdir: ws.workdir, branch: ws.branch, base: ws.base, readonly: ws.readonly, warning: ws.warning,
       parentId: spec.parentId, resumeSessionId: spec.resumeSessionId, ephemeral: !!spec.ephemeral,
       worker: worker.name, provider: worker.provider, model: worker.model, effort: worker.effort ?? null, note: selection.note,
-      workerConfig: { ...worker }, owner: process.pid, createdAt: Date.now(),
+      workerConfig: { ...worker }, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS,
+      owner: process.pid, createdAt: Date.now(),
     });
+    fs.writeFileSync(path.join(store.jobDir(id), 'prompt.txt'), prompt);
     store.audit({ id, kind, worker: worker.name, cwd, isolation: spec.isolation, briefHash: crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 12) });
-    let resolve; const promise = new Promise(r => { resolve = r; });
-    finished.set(id, { promise, resolve });
+    ensureFinished(id);
     queue.push({ id, prompt, worker, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS });
     pump();
     return id;
@@ -95,6 +104,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
       cwd: meta.workdir, logPath: path.join(dir, 'events.jsonl'), stderrPath: path.join(dir, 'stderr.log'),
       parseLine: adapter.parseLine, env: adapter.env?.(config), ...options,
     }));
+    fs.rmSync(path.join(dir, 'prompt.txt'), { force: true });
   }
 
   function monitor(id, meta, worker, adapter, openHandle, { adopted = false } = {}) {
@@ -176,11 +186,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     };
     const onOffset = logOffset => { state.logOffset = logOffset; scheduleCheckpoint(); };
 
-    if (!finished.has(id)) {
-      let resolve;
-      const promise = new Promise(r => { resolve = r; });
-      finished.set(id, { promise, resolve });
-    }
+    ensureFinished(id);
     live.set(id, state);
     maxSeen = Math.max(maxSeen, live.size);
     state.handle = openHandle({
@@ -297,6 +303,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     if (qi >= 0) {
       queue.splice(qi, 1);
       store.update(id, { state: 'cancelled', endedAt: Date.now() });
+      fs.rmSync(path.join(store.jobDir(id), 'prompt.txt'), { force: true });
       finished.get(id)?.resolve();
       return status(id);
     }
@@ -351,30 +358,49 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
   function recoverOrphans() {
     for (const m of store.list({})) {
       if (!['running', 'queued'].includes(m.state) || live.has(m.id) || isProcessAlive(m.owner)) continue;
-      if (m.state === 'queued') {
-        const updated = store.update(m.id, { state: 'orphaned', endedAt: Date.now(), error: 'el servidor se reinició antes de iniciar el job' });
-        bus.emit('job.finished', { id: m.id, worker: m.worker, provider: m.provider ?? 'desconocido', kind: m.kind, state: updated.state, task: m.task, error: updated.error, endedAt: updated.endedAt });
-        continue;
-      }
-
+      const dir = store.jobDir(m.id);
+      const promptPath = path.join(dir, 'prompt.txt');
+      const savedPrompt = readFile(promptPath);
       const worker = m.workerConfig ?? config.settings.workers[m.worker] ?? { provider: m.provider, model: m.model, effort: m.effort };
       const provider = m.provider ?? worker.provider;
-      let adapter;
-      try {
-        if (worker.provider && provider && worker.provider !== provider) throw new Error('el proveedor guardado no coincide');
-        adapter = getAdapter(provider);
-      } catch (error) {
-        const updated = store.update(m.id, { state: 'orphaned', endedAt: Date.now(), error: `no se pudo adoptar el job: ${error.message}` });
+
+      const markOrphaned = error => {
+        const updated = store.update(m.id, { state: 'orphaned', endedAt: Date.now(), error });
         bus.emit('job.finished', { id: m.id, worker: m.worker, provider: provider ?? 'desconocido', kind: m.kind, state: updated.state, task: m.task, error: updated.error, endedAt: updated.endedAt });
+      };
+      const getExpectedAdapter = () => {
+        if (worker.provider && provider && worker.provider !== provider) throw new Error('el proveedor guardado no coincide');
+        return getAdapter(provider);
+      };
+
+      if (m.state === 'queued' || (!m.pid && savedPrompt !== null)) {
+        if (savedPrompt === null) {
+          markOrphaned('el servidor se reinició antes de iniciar el job y no se encontró su prompt');
+          continue;
+        }
+        try { getExpectedAdapter(); }
+        catch (error) { markOrphaned(`no se pudo reanudar el job en cola: ${error.message}`); continue; }
+        const started = m.state === 'running';
+        store.update(m.id, {
+          state: 'queued', owner: process.pid, adopted: true,
+          ...(started ? { pid: null, startedAt: null, logOffset: 0, usage: {}, delivered: false, deliveredAt: null, hasFinalMessage: false } : {}),
+        });
+        ensureFinished(m.id);
+        queue.push({ id: m.id, prompt: savedPrompt, worker, timeoutMin: m.timeoutMin ?? config.timeoutMin, exitGraceS: m.exitGraceS ?? config.exitGraceS });
         continue;
       }
+      let adapter;
+      try {
+        adapter = getExpectedAdapter();
+      } catch (error) { markOrphaned(`no se pudo adoptar el job: ${error.message}`); continue; }
       const meta = store.update(m.id, { provider, adopted: true, owner: process.pid });
-      const dir = store.jobDir(m.id);
       monitor(m.id, meta, worker, adapter, options => attachRun({
         pid: m.pid, logPath: path.join(dir, 'events.jsonl'), stderrPath: path.join(dir, 'stderr.log'),
         offset: m.logOffset ?? 0, parseLine: adapter.parseLine, ...options,
       }), { adopted: true });
+      fs.rmSync(promptPath, { force: true });
     }
+    pump();
   }
 
   function shutdown() {
