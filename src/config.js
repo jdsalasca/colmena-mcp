@@ -55,6 +55,8 @@ export function getConfig(env = process.env) {
     exitGraceS: Number(e('EXIT_GRACE_S')) || settings.defaults.exit_grace_s,
     // 0 is a valid value (retries disabled), so don't use `||` here.
     retryTransient: e('RETRY_TRANSIENT') == null ? settings.defaults.retry_transient : Number(e('RETRY_TRANSIENT')),
+    // 0 is a valid value (watchdog disabled), so don't use `||` here either.
+    stallTimeoutMin: e('STALL_TIMEOUT_MIN') == null ? settings.defaults.stall_timeout_min : Number(e('STALL_TIMEOUT_MIN')),
     waitMaxS: Math.min(Math.max(Math.floor(Number(e('WAIT_MAX_S')) || settings.defaults.wait_max_s), 1), 1800),
     codex: resolveCmd(e('CODEX_BIN') || newestCodex()),
     opencode: resolveCmd(e('OPENCODE_BIN') || findOpencode()),
@@ -67,6 +69,7 @@ export function getConfig(env = process.env) {
     config.timeoutMin = Number(e('JOB_TIMEOUT_MIN')) || next.defaults.timeout_min;
     config.exitGraceS = Number(e('EXIT_GRACE_S')) || next.defaults.exit_grace_s;
     config.retryTransient = e('RETRY_TRANSIENT') == null ? next.defaults.retry_transient : Number(e('RETRY_TRANSIENT'));
+    config.stallTimeoutMin = e('STALL_TIMEOUT_MIN') == null ? next.defaults.stall_timeout_min : Number(e('STALL_TIMEOUT_MIN'));
     config.waitMaxS = Math.min(Math.max(Math.floor(Number(e('WAIT_MAX_S')) || next.defaults.wait_max_s), 1), 1800);
     return next;
   };

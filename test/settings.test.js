@@ -103,6 +103,16 @@ test('retry_transient: default 1, admite 0 y rechaza negativos o decimales', () 
     assert.throws(() => loadSettings(invalid.h, invalid.env), /defaults\.retry_transient/);
   }
 });
+test('MC-11: stall_timeout_min defaults to 15, 0 disables it and negatives are rejected', () => {
+  assert.equal(loadSettings(home(), {}).defaults.stall_timeout_min, 15);
+  assert.equal(DEFAULT_SETTINGS.defaults.stall_timeout_min, 15);
+  const zero = withYml('defaults: {worker: luna-max, stall_timeout_min: 0}\n');
+  assert.equal(loadSettings(zero.h, zero.env).defaults.stall_timeout_min, 0);
+  const custom = withYml('defaults: {worker: luna-max, stall_timeout_min: 0.5}\n');
+  assert.equal(loadSettings(custom.h, custom.env).defaults.stall_timeout_min, 0.5);
+  const invalid = withYml('defaults: {worker: luna-max, stall_timeout_min: -1}\n');
+  assert.throws(() => loadSettings(invalid.h, invalid.env), /defaults\.stall_timeout_min/);
+});
 test('MC-3: wait_max_s defaults to 600 and validates within 1..1800', () => {
   assert.equal(loadSettings(home(), {}).defaults.wait_max_s, 600);
   const { h, env } = withYml('defaults: {worker: luna-max, wait_max_s: 1800}\n');
