@@ -42,7 +42,7 @@ async function connect(extraEnv = {}) {
   return { client, call };
 }
 
-const NAMES = ['workers', 'preferences', 'report', 'present', 'reload_config', 'stats', 'improve', 'widget', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'cancel', 'merge', 'cleanup'];
+const NAMES = ['workers', 'preferences', 'report', 'present', 'reload_config', 'stats', 'improve', 'widget', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'verdict', 'cancel', 'merge', 'cleanup'];
 
 function providerHome({ codexEnabled = true } = {}) {
   const home = tmp('colmena-pref-');
@@ -239,6 +239,65 @@ test('stats MCP tool applies since_days to persisted jobs', async () => {
     assert.equal(typeof stats.range.since, 'string');
     assert.equal(typeof stats.range.until, 'string');
   } finally { await client.close(); }
+});
+
+test('MC-6: verdict registra la aceptación solo con id válido y stats la separa del estado de ejecución', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    const job = await call('run', { task: 'hola', cwd: tmp('luna-mc6-'), wait: true });
+    assert.equal(job.state, 'done');
+    const metaPath = path.join(home, 'jobs', job.id, 'meta.json');
+    assert.equal(JSON.parse(fs.readFileSync(metaPath, 'utf8')).verdict, undefined);
+
+    assert.match((await call('verdict', { job_id: 'nope', verdict: 'accepted' })).error, /no existe/);
+    assert.match((await call('verdict', { job_id: job.id, verdict: 'aprobado' })).error, /accepted|needs_work/i);
+
+    const saved = await call('verdict', { job_id: job.id, verdict: 'accepted', note: 'revisado con diff' });
+    assert.equal(saved.job_id, job.id);
+    assert.equal(saved.verdict, 'accepted');
+    assert.equal(saved.note, 'revisado con diff');
+    assert.equal(typeof saved.at, 'number');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    assert.equal(meta.verdict, 'accepted');
+    assert.equal(meta.verdictNote, 'revisado con diff');
+    assert.equal(typeof meta.verdictAt, 'number');
+
+    await call('reload_config', {});
+    const worker = (await call('stats', { since_days: 1 })).byWorker['luna-max'];
+    assert.equal(worker.done, 1);
+    assert.equal(worker.successRate, 1);
+    assert.equal(worker.reviewed, 1);
+    assert.equal(worker.accepted, 1);
+    assert.equal(worker.needsWork, 0);
+    assert.equal(worker.reviewCoverage, 1);
+    assert.equal(worker.acceptanceRate, 1);
+  } finally { await client.close(); }
+});
+
+test('MC-6: needs_work persiste tras reiniciar y los jobs sin veredicto no cuentan como rechazados', async () => {
+  const home = codexOnlyHome();
+  const first = await connect({ COLMENA_HOME: home });
+  const job = await first.call('run', { task: 'hola', cwd: tmp('luna-mc6-restart-'), wait: true });
+  const pending = await first.call('run', { task: 'hola segundo', cwd: tmp('luna-mc6-restart2-'), wait: true });
+  assert.equal((await first.call('verdict', { job_id: job.id, verdict: 'needs_work', note: 'falta prueba' })).verdict, 'needs_work');
+  assert.equal((await first.call('verdict', { job_id: pending.id, verdict: 'accepted' })).verdict, 'accepted');
+  await first.client.close();
+
+  const second = await connect({ COLMENA_HOME: home });
+  try {
+    const rerun = await second.call('run', { task: 'hola tercero', cwd: tmp('luna-mc6-restart3-'), wait: true });
+    const worker = (await second.call('stats', { since_days: 1 })).byWorker['luna-max'];
+    assert.equal(worker.runs, 3);
+    assert.equal(worker.done, 3);
+    assert.equal(worker.successRate, 1);
+    assert.equal(worker.reviewed, 2);
+    assert.equal(worker.accepted, 1);
+    assert.equal(worker.needsWork, 1);
+    assert.equal(worker.reviewCoverage, 2 / 3);
+    assert.equal(worker.acceptanceRate, 0.5);
+    assert.equal((await second.call('result', { job_id: rerun.id })).state, 'done');
+  } finally { await second.client.close(); }
 });
 
 test('run wait:true returns report; extra "model" arg cannot change the model', async () => {
