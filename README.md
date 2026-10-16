@@ -26,7 +26,7 @@ npm test
 claude mcp add -s user colmena -- node "<ruta-absoluta>/colmena-mcp/src/server.js"
 ```
 
-Humo real (gasta unas pocas llamadas): `npm run smoke -- luna-max,ds-flash --report`.
+Humo real (gasta unas pocas llamadas): `npm run smoke -- luna-max,ds-flash --report`. Opcional y **nunca en CI**: por proveedor ejecuta una tarea mínima y comprueba, reportando cada una, la selección del worker y los metadatos persistidos (`provider`/`model`/`effort`) frente a `colmena.yml`, el formato `RESULT/FILES/TESTS/RISKS`, la señal final del proveedor cuando la emite (Codex: `turn.completed`; OpenCode no emite señal final) y que el modelo expuesto en sus eventos coincida con el configurado — si el proveedor no lo expone, el smoke **no afirma** el modelo ejecutado. Devuelve código distinto de cero si alguna comprobación falla y elimina sus temporales incluso en fallo.
 
 ## Configuración: `colmena.yml`
 
@@ -136,7 +136,7 @@ Con `plugins.improve: {enabled: true, hints: true}` hay invitaciones (nunca ased
 Los agentes tienen internet por defecto: Codex con `--search` y OpenCode con `webfetch`; el preámbulo les pide consultar documentación y versiones actuales cuando dependan de una API o dato externo y citar la fuente. También corren **sin sandbox ni aprobaciones** (Codex: `--dangerously-bypass-approvals-and-sandbox`; OpenCode: `--auto`). Con `inplace` un agente puede modificar o borrar cualquier archivo accesible a tu usuario. Por eso `worktree` es el valor por defecto en repos git, `merge` nunca se ejecuta solo, `cleanup` solo toca `colmena/*` bajo `COLMENA_HOME/worktrees`, el YAML no admite flags arbitrarios y cada lanzamiento queda en `audit.log`. `readonly` es real: `-s read-only` en Codex y `--agent plan` en OpenCode (verificado). Úsalo solo en repos y máquinas de confianza.
 
 ## Desarrollo
-`npm test` usa proveedores falsos (`test/fake-codex.js`, `test/fake-opencode.js`) y repos git temporales; no gasta llamadas reales.
+`npm test` usa proveedores falsos (`test/fake-codex.js`, `test/fake-opencode.js`) y repos git temporales; no gasta llamadas reales. Los fakes aceptan knobs de error de contrato sin red (`FAKE_NO_FINAL`, `FAKE_EXPOSE_MODEL`, `FAKE_RAW`) y `test/runner.test.js` ejecuta `scripts/smoke.js` contra ellos para validar las comprobaciones del humo real (`npm run smoke`, que no forma parte de `npm test` ni de CI).
 Diseño: `docs/superpowers/specs/` · Planes: `docs/superpowers/plans/`.
 
 Licencia MIT.
