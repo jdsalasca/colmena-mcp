@@ -28,7 +28,7 @@ async function connect(extraEnv = {}) {
   return { client, call };
 }
 
-const NAMES = ['workers', 'report', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'cancel', 'merge', 'cleanup'];
+const NAMES = ['workers', 'report', 'reload_config', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'summarize', 'compact', 'handoff', 'review', 'cancel', 'merge', 'cleanup'];
 
 test('workers + report tools end to end', async () => {
   const { client, call } = await connect();
@@ -66,6 +66,41 @@ test('run wait:true returns report; extra "model" arg cannot change the model', 
     const argv = JSON.parse(fs.readFileSync(log, 'utf8').trim().split('\n')[0]).argv;
     assert.equal(argv[argv.indexOf('-m') + 1], 'gpt-6-luna');
     assert.ok(argv.includes('model_reasoning_effort="max"'));
+  } finally { await client.close(); }
+});
+
+test('reload_config updates workers, reports a compact diff, and preserves settings on invalid YAML', async () => {
+  const home = codexOnlyHome(); const log = path.join(tmp('luna-rl-'), 'f.log');
+  const file = path.join(home, 'colmena.yml');
+  const original = fs.readFileSync(file, 'utf8');
+  const { client, call } = await connect({ COLMENA_HOME: home, COLMENA_CONFIG: file, FAKE_LOG: log, COLMENA_MAX_PARALLEL: '2' });
+  try {
+    fs.writeFileSync(file, original.replace('model: gpt-6-luna', 'model: gpt-luna-reloaded, budget: {monthly_usd: 3}')
+      .replace('  alt: {provider: codex, model: gpt-alt, effort: high, priority: 2}', '  new: {provider: codex, model: gpt-new, priority: 2}')
+      .replace('roles: {reporter: luna-max, summarizer: luna-max, reviewer: luna-max}', 'roles: {reporter: luna-max, summarizer: luna-max, reviewer: new}')
+      .replace('defaults: {worker: luna-max}', 'defaults: {worker: new, max_parallel: 8}')
+      .replace('plugins:\n  notify: {enabled: false}', 'plugins:\n  notify: {enabled: false}\n  report: {enabled: false}'));
+    const diff = await call('reload_config', {});
+    assert.deepEqual(diff, {
+      added: ['new'], removed: ['alt'], changed: [{ alias: 'luna-max', fields: ['budget.monthly_usd', 'model'] }],
+      roles: ['reviewer'], defaults: ['max_parallel', 'worker'],
+    });
+    assert.equal((await client.listTools()).tools.some(tool => tool.name === 'report'), false);
+    const run = await call('run', { task: 'modelo renovado', worker: 'luna-max', cwd: tmp('luna-reload-c-'), wait: true });
+    assert.equal(run.state, 'done');
+    const invocation = JSON.parse(fs.readFileSync(log, 'utf8').trim().split('\n')[0]);
+    assert.equal(invocation.argv[invocation.argv.indexOf('-m') + 1], 'gpt-luna-reloaded');
+
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('report: {enabled: false}', 'report: {enabled: true}'));
+    await call('reload_config', {});
+    assert.equal((await client.listTools()).tools.some(tool => tool.name === 'report'), true);
+
+    fs.writeFileSync(file, 'standards: {enabled: maybe}\n');
+    const invalid = await call('reload_config', {});
+    assert.match(invalid.error, /standards\.enabled/);
+    const workers = await call('workers', {});
+    assert.equal(workers.find(w => w.alias === 'luna-max').model, 'gpt-luna-reloaded');
+    assert.equal(workers.some(w => w.alias === 'new'), true);
   } finally { await client.close(); }
 });
 

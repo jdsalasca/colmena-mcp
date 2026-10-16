@@ -2,8 +2,9 @@ export const REPORT_SUFFIX = `\n\n---\nFORMATO OBLIGATORIO DE TU MENSAJE FINAL (
 
 const KEYS = ['RESULT', 'FILES', 'TESTS', 'RISKS'];
 
-export function buildPrompt({ task, contextFiles = [], handoff = [] }) {
+export function buildPrompt({ task, contextFiles = [], handoff = [], kind = 'run', standards }) {
   let p = '';
+  if (kind === 'run' && standards?.enabled && standards.preamble) p += `${standards.preamble.trim()}\n\n`;
   if (handoff.length) p += `## Contexto previo (resúmenes de otros agentes)\n${handoff.map((h, i) => `### Agente ${i + 1}\n${h}`).join('\n\n')}\n\n`;
   if (contextFiles.length) p += `## Archivos relevantes (léelos primero)\n${contextFiles.map(f => `- ${f}`).join('\n')}\n\n`;
   p += `## Tarea\n${task}`;

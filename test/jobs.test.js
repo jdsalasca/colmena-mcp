@@ -126,6 +126,51 @@ test('continueJob resumes saved session in same workdir', async () => {
     assert.equal(jm.result(id2).state, 'done');
   } finally { delete process.env.FAKE_LOG; }
 });
+test('reload uses the new worker model for subsequent runs', async () => {
+  const log = path.join(tmp('luna-reload-'), 'fake.log'); process.env.FAKE_LOG = log;
+  try {
+    const { jm, config } = mk();
+    const before = fs.readFileSync(path.join(config.home, 'colmena.yml'), 'utf8');
+    fs.writeFileSync(path.join(config.home, 'colmena.yml'), before.replace('model: gpt-6-luna', 'model: gpt-luna-reloaded'));
+    config.reloadSettings();
+    const id = jm.submit(S('usa modelo recargado'));
+    await jm.wait([id]);
+    const call = JSON.parse(fs.readFileSync(log, 'utf8').trim().split('\n')[0]);
+    assert.equal(call.argv[call.argv.indexOf('-m') + 1], 'gpt-luna-reloaded');
+  } finally { delete process.env.FAKE_LOG; }
+});
+test('reload keeps environment parallelism and timeout overrides above YAML values', () => {
+  const { config } = mk({ COLMENA_MAX_PARALLEL: '1', COLMENA_JOB_TIMEOUT_MIN: '7' });
+  const file = path.join(config.home, 'colmena.yml');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(
+    'defaults: {worker: luna-max}', 'defaults: {worker: luna-max, max_parallel: 6, timeout_min: 1}',
+  ));
+  config.reloadSettings();
+  assert.equal(config.maxParallel, 1);
+  assert.equal(config.timeoutMin, 7);
+});
+test('continue fails clearly when its previous worker was removed by reload', async () => {
+  const { jm, config } = mk();
+  const id = jm.submit(S('usa alt', { worker: 'alt' })); await jm.wait([id]);
+  fs.writeFileSync(path.join(config.home, 'colmena.yml'), `
+workers:
+  luna-max: {provider: codex, model: gpt-6-luna}
+  alt: {provider: codex, model: gpt-alt, enabled: false}
+roles: {reporter: luna-max, summarizer: luna-max, reviewer: luna-max}
+defaults: {worker: luna-max}
+`);
+  config.reloadSettings();
+  assert.throws(() => jm.continueJob(id, 'continúa'), /worker 'alt' está deshabilitado/);
+
+  fs.writeFileSync(path.join(config.home, 'colmena.yml'), `
+workers:
+  luna-max: {provider: codex, model: gpt-6-luna}
+roles: {reporter: luna-max, summarizer: luna-max, reviewer: luna-max}
+defaults: {worker: luna-max}
+`);
+  config.reloadSettings();
+  assert.throws(() => jm.continueJob(id, 'continúa'), /worker 'alt' no existe/);
+});
 test('malformed agent reply → raw truncated text, no crash', async () => {
   process.env.FAKE_RAW = 'sin formato '.repeat(300);
   try {

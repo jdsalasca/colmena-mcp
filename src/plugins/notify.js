@@ -8,13 +8,19 @@ const count = (items, key) => {
 };
 
 // Subscribes to the job bus: grouped start toasts, finish/fail toasts, and a heartbeat while work is running.
-export function notifyPlugin({ bus, jm, cfg, notifier, heartbeatMs, debounceMs = 2000, logPath }) {
-  const on = new Set(cfg.on ?? ['start', 'finish', 'fail']);
+export function notifyPlugin({
+  bus, jm, cfg, notifier, heartbeatMs, debounceMs = 2000, logPath,
+  setIntervalFn = setInterval, clearIntervalFn = clearInterval,
+}) {
+  let current = { ...cfg, on: [...(cfg.on ?? ['start', 'finish', 'fail'])] };
+  let on = new Set(current.on);
   let spent = 0;
   const bufs = { start: [], finish: [], fail: [] };
   const timers = { start: null, finish: null, fail: null };
+  let beat = null;
 
   const emit = n => {
+    if (!current.enabled) return;
     if (logPath) {
       try {
         fs.mkdirSync(path.dirname(logPath), { recursive: true });
@@ -59,18 +65,30 @@ export function notifyPlugin({ bus, jm, cfg, notifier, heartbeatMs, debounceMs =
   bus.on('job.started', onStart);
   bus.on('job.finished', onFinish);
 
-  const beat = setInterval(() => {
+  const heartbeat = () => {
     const { running, queued } = jm.stats();
     if (running + queued === 0) return;
     const starts = (jm.active?.() ?? []).map(a => a.startedAt).filter(Boolean);
     const mins = starts.length ? Math.round((Date.now() - Math.min(...starts)) / 60000) : 0;
     emit({ kind: 'heartbeat', title: 'Colmena · trabajando', body: `${running} corriendo · ${queued} en cola · ${mins} min · $${spent.toFixed(2)}` });
-  }, heartbeatMs ?? (cfg.heartbeat_min ?? 10) * 60000);
-  beat.unref();
+  };
+  const restartHeartbeat = () => {
+    if (beat) clearIntervalFn(beat);
+    beat = null;
+    if (!current.enabled) return;
+    beat = setIntervalFn(heartbeat, heartbeatMs ?? (current.heartbeat_min ?? 10) * 60000);
+    beat.unref?.();
+  };
+  restartHeartbeat();
 
   return {
+    update(next) {
+      current = { ...next, on: [...(next.on ?? ['start', 'finish', 'fail'])] };
+      on = new Set(current.on);
+      restartHeartbeat();
+    },
     stop() {
-      clearInterval(beat);
+      if (beat) clearIntervalFn(beat);
       for (const k of Object.keys(timers)) clearTimeout(timers[k]);
       bus.off('job.started', onStart);
       bus.off('job.finished', onFinish);

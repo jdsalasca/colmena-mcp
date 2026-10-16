@@ -20,6 +20,10 @@ test('no yml → defaults', () => {
   assert.equal(s.roles.reporter, 'luna-go');
   assert.equal(s.plugins.notify.heartbeat_min, 10);
   assert.equal(s.plugins.report.default_style, 'papercraft');
+  assert.equal(s.standards.enabled, true);
+  assert.match(s.standards.preamble, /red.*green.*refactor/i);
+  assert.match(s.standards.preamble, /DRY/);
+  assert.match(s.standards.preamble, /evidencia/i);
   assert.deepEqual(DEFAULT_SETTINGS.defaults.max_parallel, 4);
 });
 test('yml replaces workers, merges sections', () => {
@@ -60,6 +64,20 @@ test('COLMENA_CONFIG points elsewhere', () => {
   const h = home(); const f = path.join(h, 'otro.yml');
   fs.writeFileSync(f, 'workers:\n  z: {provider: codex, model: m}\ndefaults: {worker: z}\nroles: {reporter: z, summarizer: z, reviewer: z}\n');
   assert.deepEqual(Object.keys(loadSettings(home(), { COLMENA_CONFIG: f }).workers), ['z']);
+});
+test('standards supports a custom preamble and can be disabled', () => {
+  const custom = withYml('standards: {enabled: true, preamble: "Usa contratos y evidencia."}\n');
+  assert.deepEqual(loadSettings(custom.h, custom.env).standards, { enabled: true, preamble: 'Usa contratos y evidencia.' });
+  const disabled = withYml('standards: {enabled: false}\n');
+  const settings = loadSettings(disabled.h, disabled.env);
+  assert.equal(settings.standards.enabled, false);
+  assert.match(settings.standards.preamble, /TDD/i);
+});
+test('invalid standards identify the field', () => {
+  const { h, env } = withYml('standards: {enabled: yes, preamble: ""}\n');
+  assert.throws(() => loadSettings(h, env), /standards\.enabled|standards\.preamble/);
+  const scalar = withYml('standards: texto\n');
+  assert.throws(() => loadSettings(scalar.h, scalar.env), /standards/);
 });
 test('config: COLMENA_* beats LUNA_*, settings attached, default home', () => {
   const c = getConfig({ COLMENA_HOME: 'C:\\a', LUNA_HOME: 'C:\\b', COLMENA_CODEX_BIN: 'x.js' });

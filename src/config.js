@@ -40,7 +40,7 @@ export function getConfig(env = process.env) {
   const e = name => env[`COLMENA_${name}`] ?? env[`LUNA_${name}`];
   const home = e('HOME') || path.join(os.homedir(), '.colmena');
   const settings = loadSettings(home, env);
-  return {
+  const config = {
     home,
     jobsDir: path.join(home, 'jobs'),
     worktreesDir: path.join(home, 'worktrees'),
@@ -55,4 +55,12 @@ export function getConfig(env = process.env) {
     opencode: resolveCmd(e('OPENCODE_BIN') || findOpencode()),
     notifier: e('NOTIFIER') || 'toast',
   };
+  config.reloadSettings = () => {
+    const next = loadSettings(home, env);
+    config.settings = next;
+    config.maxParallel = Number(e('MAX_PARALLEL')) || next.defaults.max_parallel;
+    config.timeoutMin = Number(e('JOB_TIMEOUT_MIN')) || next.defaults.timeout_min;
+    return next;
+  };
+  return config;
 }

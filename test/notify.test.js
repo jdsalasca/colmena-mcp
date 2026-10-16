@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
 import { getConfig } from '../src/config.js';
 import { createJobManager } from '../src/jobs.js';
@@ -82,6 +83,31 @@ test('heartbeat timer does not keep the process alive', () => {
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 8000 });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /done/);
+});
+test('update replaces notification filter and restarts heartbeat timer', async () => {
+  const bus = new EventEmitter(); const timers = []; const cleared = []; const sent = [];
+  const plugin = notifyPlugin({
+    bus,
+    jm: { stats: () => ({ running: 0, queued: 0 }), active: () => [] },
+    cfg: { enabled: true, on: ['start'], heartbeat_min: 5 },
+    notifier: { send: n => sent.push(n) }, debounceMs: 0,
+    setIntervalFn: (fn, ms) => { const timer = { fn, ms, unref() {} }; timers.push(timer); return timer; },
+    clearIntervalFn: timer => cleared.push(timer),
+  });
+  assert.equal(timers[0].ms, 300000);
+  plugin.update({ enabled: true, on: ['finish'], heartbeat_min: 2 });
+  assert.deepEqual(cleared, [timers[0]]);
+  assert.equal(timers[1].ms, 120000);
+  bus.emit('job.started', { worker: 'a' });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(sent.some(n => n.kind === 'start'), false);
+  bus.emit('job.finished', { worker: 'a', task: 'x', state: 'done', costUsd: 0 });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(sent.some(n => n.kind === 'finish'), true);
+  plugin.update({ enabled: false, on: ['start'], heartbeat_min: 1 });
+  assert.deepEqual(cleared, [timers[0], timers[1]]);
+  assert.equal(timers.length, 2);
+  plugin.stop();
 });
 test('createNotifier: none/log never throw; toast returns an object with send', () => {
   assert.doesNotThrow(() => createNotifier('none').send({ title: 't', body: 'b' }));

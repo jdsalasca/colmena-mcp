@@ -3,6 +3,13 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { z } from 'zod';
 
+export const DEFAULT_STANDARDS_PREAMBLE = `## Estándares de trabajo
+- Aplica TDD en ciclos red → green → refactor: escribe primero una prueba que falle por la razón correcta, luego el código mínimo y después refactoriza.
+- Mantén el código limpio y DRY; busca y reutiliza lo que ya existe antes de escribir helpers o lógica nuevos.
+- Verifica cada resultado con pruebas o comandos y reporta evidencia real; no afirmes éxito sin comprobarlo.
+- Si están disponibles, usa los skills de superpowers para TDD y verificación antes de completar.
+- Respeta el formato obligatorio de reporte RESULT/FILES/TESTS/RISKS incluido al final del brief.`;
+
 const Worker = z.object({
   provider: z.enum(['codex', 'opencode']),
   model: z.string().min(1),
@@ -22,6 +29,7 @@ const Notify = z.object({
   heartbeat_min: z.number().positive().default(10),
 });
 const Report = z.object({ enabled: z.boolean().default(true), default_style: z.string().default('papercraft') });
+const Standards = z.object({ enabled: z.boolean().default(true), preamble: z.string().min(1).default(DEFAULT_STANDARDS_PREAMBLE) });
 
 export const DEFAULT_SETTINGS = {
   workers: {
@@ -32,6 +40,7 @@ export const DEFAULT_SETTINGS = {
   roles: { reporter: 'luna-go', summarizer: 'luna-go', reviewer: 'luna-max' },
   defaults: { worker: 'luna-max', max_parallel: 4, timeout_min: 60 },
   plugins: { notify: {}, report: {} },
+  standards: { enabled: true, preamble: DEFAULT_STANDARDS_PREAMBLE },
 };
 
 const fmt = err => err.issues.map(i => `${i.path.join('.') || '(raíz)'}: ${i.message}`).join('; ');
@@ -51,11 +60,16 @@ export function loadSettings(home, env = process.env) {
       notify: { ...DEFAULT_SETTINGS.plugins.notify, ...(user.plugins?.notify ?? {}) },
       report: { ...DEFAULT_SETTINGS.plugins.report, ...(user.plugins?.report ?? {}) },
     },
+    standards: user.standards == null ? DEFAULT_SETTINGS.standards
+      : typeof user.standards === 'object' && !Array.isArray(user.standards)
+        ? { ...DEFAULT_SETTINGS.standards, ...user.standards }
+        : user.standards,
   };
   const schema = z.object({
     workers: z.record(z.string(), Worker).refine(w => Object.keys(w).length > 0, 'debe haber al menos un worker'),
     roles: Roles, defaults: Defaults,
     plugins: z.object({ notify: Notify, report: Report }),
+    standards: Standards,
   });
   const r = schema.safeParse(merged);
   if (!r.success) throw new Error(`colmena.yml inválido (${file}): ${fmt(r.error)}`);

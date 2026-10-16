@@ -13,6 +13,31 @@ const isolationEnum = z.enum(['worktree', 'inplace', 'readonly']).optional()
   .describe('worktree (defecto en repos git: rama colmena/<id> aislada) | inplace (edita el directorio) | readonly (solo lectura)');
 const detailEnum = z.enum(['min', 'normal', 'full']).optional().describe('min (defecto, ~300 tokens) | normal | full');
 
+const changedFields = (before = {}, after = {}, prefix = '') => [...new Set([...Object.keys(before), ...Object.keys(after)])]
+  .flatMap(key => {
+    const oldValue = before[key]; const nextValue = after[key];
+    const field = prefix ? `${prefix}.${key}` : key;
+    const oldRecord = oldValue && typeof oldValue === 'object' && !Array.isArray(oldValue);
+    const nextRecord = nextValue && typeof nextValue === 'object' && !Array.isArray(nextValue);
+    if ((oldRecord || oldValue == null) && (nextRecord || nextValue == null) && (oldRecord || nextRecord)) {
+      return changedFields(oldRecord ? oldValue : {}, nextRecord ? nextValue : {}, field);
+    }
+    return JSON.stringify(oldValue) === JSON.stringify(nextValue) ? [] : [field];
+  }).sort();
+
+function settingsDiff(before, after) {
+  const aliases = [...new Set([...Object.keys(before.workers), ...Object.keys(after.workers)])].sort();
+  return {
+    added: aliases.filter(alias => !before.workers[alias]),
+    removed: aliases.filter(alias => !after.workers[alias]),
+    changed: aliases.filter(alias => before.workers[alias] && after.workers[alias])
+      .map(alias => ({ alias, fields: changedFields(before.workers[alias], after.workers[alias]) }))
+      .filter(worker => worker.fields.length),
+    roles: changedFields(before.roles, after.roles),
+    defaults: changedFields(before.defaults, after.defaults),
+  };
+}
+
 const taskShape = {
   task: z.string().min(1).describe('Brief claro y autocontenido: objetivo, archivos, criterio de aceptación. El agente no ve esta conversación.'),
   cwd: z.string().optional().describe('Directorio del proyecto (defecto: cwd del servidor)'),
@@ -27,7 +52,7 @@ export function buildServer(config) {
   const jm = createJobManager(config);
   jm.recoverOrphans();
   const nc = config.settings.plugins.notify;
-  const notify = nc.enabled ? notifyPlugin({ bus: jm.bus, jm, cfg: nc, notifier: createNotifier(config.notifier), logPath: config.activityPath }) : null;
+  const notify = notifyPlugin({ bus: jm.bus, jm, cfg: nc, notifier: createNotifier(config.notifier), logPath: config.activityPath });
   const server = new McpServer({ name: 'colmena', version: '0.2.0' });
 
   const ok = obj => ({ content: [{ type: 'text', text: JSON.stringify(obj) }] });
@@ -43,11 +68,18 @@ export function buildServer(config) {
 
   tool('workers', 'Lista los workers de colmena.yml con prioridad, fortalezas, gasto del mes, presupuesto restante y disponibilidad. Úsalo para decidir a quién delegar.', {}, () => jm.workers());
 
-  if (config.settings.plugins.report.enabled) {
-    tool('report', 'Genera un reporte HTML bonito de lo logrado por los jobs indicados (ronda final). El worker del rol reporter lo redacta con el estilo elegido (defecto papercraft); si falla, se usa un renderizador de respaldo. Devuelve la ruta del HTML.',
-      { job_ids: z.array(z.string()).min(1), style: z.string().optional().describe('Nombre de estilo (carpeta styles/<nombre>); defecto: plugins.report.default_style'), title: z.string().optional(), subtitle: z.string().optional(), open: z.boolean().optional().describe('Abrir en el navegador al terminar') },
-      a => generateReport({ jm, config, ids: a.job_ids, style: a.style, title: a.title, subtitle: a.subtitle, open: a.open }));
-  }
+  const reportTool = tool('report', 'Genera un reporte HTML bonito de lo logrado por los jobs indicados (ronda final). El worker del rol reporter lo redacta con el estilo elegido (defecto papercraft); si falla, se usa un renderizador de respaldo. Devuelve la ruta del HTML.',
+    { job_ids: z.array(z.string()).min(1), style: z.string().optional().describe('Nombre de estilo (carpeta styles/<nombre>); defecto: plugins.report.default_style'), title: z.string().optional(), subtitle: z.string().optional(), open: z.boolean().optional().describe('Abrir en el navegador al terminar') },
+    a => generateReport({ jm, config, ids: a.job_ids, style: a.style, title: a.title, subtitle: a.subtitle, open: a.open }));
+  if (!config.settings.plugins.report.enabled) reportTool.disable();
+
+  tool('reload_config', 'Vuelve a leer y validar colmena.yml. Los jobs existentes conservan su configuración; los siguientes usan la nueva.', {}, () => {
+    const previous = config.settings;
+    const next = config.reloadSettings();
+    notify.update(next.plugins.notify);
+    if (next.plugins.report.enabled) reportTool.enable(); else reportTool.disable();
+    return settingsDiff(previous, next);
+  });
 
   tool('run', 'Lanza un agente obrero (Codex u OpenCode según el worker; sin aprobaciones, con internet). Devuelve job_id; con wait=true espera el reporte (hasta timeout_s).',
     { ...taskShape, wait: z.boolean().optional(), timeout_s: z.number().optional() },

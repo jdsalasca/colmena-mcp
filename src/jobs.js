@@ -15,11 +15,11 @@ const alive = pid => { if (!pid) return false; try { process.kill(pid, 0); retur
 
 export function createJobManager(config, { bus = new EventEmitter() } = {}) {
   const store = createStore(config);
-  const settings = config.settings;
-  const workers = settings.workers;
   const ledger = createLedger(config);
 
   function resolveWorker(alias) {
+    const settings = config.settings;
+    const workers = settings.workers;
     const name = alias ?? settings.defaults.worker;
     const w = workers[name];
     if (!w || w.enabled === false) {
@@ -54,23 +54,26 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
   function submit(spec) {
     const handoffTexts = (spec.handoff ?? []).map(summaryText);
     if (spec.worker) resolveWorker(spec.worker); // unknown/disabled → clear error before touching anything
-    const worker = resolveWorker(pickWorker(settings, ledger, { worker: spec.worker, kind: spec.taskKind }));
+    const worker = resolveWorker(pickWorker(config.settings, ledger, { worker: spec.worker, kind: spec.taskKind }));
     const cwd = spec.cwd ?? process.cwd();
     const id = store.newId();
     const ws = spec.workspace ?? iso.prepare(config, { cwd, isolation: spec.isolation ?? 'inplace', id });
-    const prompt = spec.rawPrompt ?? buildPrompt({ task: spec.task, contextFiles: spec.contextFiles, handoff: handoffTexts });
+    const kind = spec.kind ?? 'run';
+    const prompt = spec.rawPrompt ?? buildPrompt({
+      task: spec.task, contextFiles: spec.contextFiles, handoff: handoffTexts, kind, standards: config.settings.standards,
+    });
     store.create({
-      id, state: 'queued', kind: spec.kind ?? 'run', task: String(spec.task).slice(0, 300), cwd,
+      id, state: 'queued', kind, task: String(spec.task).slice(0, 300), cwd,
       isolation: spec.workspace ? 'reuse' : (spec.isolation ?? 'inplace'),
       workdir: ws.workdir, branch: ws.branch, base: ws.base, readonly: ws.readonly, warning: ws.warning,
       parentId: spec.parentId, resumeSessionId: spec.resumeSessionId, ephemeral: !!spec.ephemeral,
       worker: worker.name, provider: worker.provider,
       owner: process.pid, createdAt: Date.now(),
     });
-    store.audit({ id, kind: spec.kind ?? 'run', worker: worker.name, cwd, isolation: spec.isolation, briefHash: crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 12) });
+    store.audit({ id, kind, worker: worker.name, cwd, isolation: spec.isolation, briefHash: crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 12) });
     let resolve; const promise = new Promise(r => { resolve = r; });
     finished.set(id, { promise, resolve });
-    queue.push({ id, prompt });
+    queue.push({ id, prompt, worker, timeoutMin: config.timeoutMin });
     pump();
     return id;
   }
@@ -80,14 +83,13 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     maxSeen = Math.max(maxSeen, live.size);
   }
 
-  function start({ id, prompt }) {
+  function start({ id, prompt, worker, timeoutMin }) {
     const meta = store.update(id, { state: 'running', startedAt: Date.now() });
     const dir = store.jobDir(id);
     const state = { cancelled: false, timedOut: false, timer: null, handle: null };
     live.set(id, state);
     maxSeen = Math.max(maxSeen, live.size);
     let usage = {}; let lastText = '';
-    const worker = resolveWorker(meta.worker);
     const adapter = getAdapter(worker.provider);
     const handle = startRun(adapter.cmd(config), adapter.buildArgs({
       prompt, workdir: meta.workdir, lastMessagePath: path.join(dir, 'last_message.md'),
@@ -102,12 +104,12 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     });
     state.handle = handle;
     store.update(id, { pid: handle.pid });
-    state.timer = setTimeout(() => { state.timedOut = true; handle.kill(); }, config.timeoutMin * 60000);
+    state.timer = setTimeout(() => { state.timedOut = true; handle.kill(); }, timeoutMin * 60000);
     bus.emit('job.started', { id, worker: meta.worker, task: meta.task, kind: meta.kind });
-    handle.done.then(r => finalize(id, meta, state, r, lastText, usage));
+    handle.done.then(r => finalize(id, meta, state, r, lastText, usage, worker, timeoutMin));
   }
 
-  function finalize(id, meta, state, r, lastText, usage) {
+  function finalize(id, meta, state, r, lastText, usage, worker, timeoutMin) {
     clearTimeout(state.timer);
     live.delete(id);
     const dir = store.jobDir(id);
@@ -115,14 +117,14 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     if (text == null && lastText) { text = lastText; fs.writeFileSync(path.join(dir, 'last_message.md'), text); }
     let patch = { endedAt: Date.now(), usage };
     if (state.cancelled) patch.state = 'cancelled';
-    else if (state.timedOut) Object.assign(patch, { state: 'failed', error: `timeout tras ${config.timeoutMin} min` });
+    else if (state.timedOut) Object.assign(patch, { state: 'failed', error: `timeout tras ${timeoutMin} min` });
     else if (r.code === 0) patch.state = 'done';
     else Object.assign(patch, { state: 'failed', error: `codex salió con código ${r.code}: ${r.stderrTail}`.slice(0, 1500) });
     if (patch.state === 'done' && meta.kind === 'compact' && meta.parentId && text) fs.writeFileSync(path.join(store.jobDir(meta.parentId), 'summary.md'), text);
     if (meta.kind === 'run' && !meta.readonly) {
       try { const ch = iso.changes(meta.workdir, meta.base); patch.files = ch.files; patch.diffstat = ch.diffstat; } catch {}
     }
-    patch.costUsd = costOf(workers[meta.worker], usage);
+    patch.costUsd = costOf(worker, usage);
     try { ledger.record(meta.worker, usage, patch.costUsd); } catch { /* bookkeeping must never break a job */ }
     const updated = store.update(id, patch);
     bus.emit('job.finished', { id, worker: meta.worker, kind: meta.kind, state: updated.state, task: meta.task, error: updated.error, costUsd: patch.costUsd, usage, startedAt: updated.startedAt, endedAt: updated.endedAt });
@@ -197,7 +199,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     });
   }
 
-  const roleWorker = kind => settings.roles[kind === 'review' ? 'reviewer' : 'summarizer'];
+  const roleWorker = kind => config.settings.roles[kind === 'review' ? 'reviewer' : 'summarizer'];
 
   function helperJob(kind, id, rawPrompt) {
     const m = need(id);
@@ -221,12 +223,12 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     if (id) {
       const m = need(id);
       const how = m.base ? `git diff ${m.base}` : 'git diff HEAD y git status';
-      return helperJob('review', id, buildPrompt({ task: `Revisa en modo solo lectura los cambios de este directorio (${how}). Busca bugs, regresiones y pruebas faltantes.${focus ? ` Foco: ${focus}.` : ''} No modifiques archivos.` }));
+      return helperJob('review', id, buildPrompt({ kind: 'review', task: `Revisa en modo solo lectura los cambios de este directorio (${how}). Busca bugs, regresiones y pruebas faltantes.${focus ? ` Foco: ${focus}.` : ''} No modifiques archivos.` }));
     }
     return submit({
       kind: 'review', task: 'review de cwd', cwd, ephemeral: true, worker: roleWorker('review'),
       workspace: { workdir: cwd, readonly: true },
-      rawPrompt: buildPrompt({ task: `Revisa en modo solo lectura los cambios pendientes (git diff HEAD y git status). Busca bugs, regresiones y pruebas faltantes.${focus ? ` Foco: ${focus}.` : ''} No modifiques archivos.` }),
+      rawPrompt: buildPrompt({ kind: 'review', task: `Revisa en modo solo lectura los cambios pendientes (git diff HEAD y git status). Busca bugs, regresiones y pruebas faltantes.${focus ? ` Foco: ${focus}.` : ''} No modifiques archivos.` }),
     });
   }
 
@@ -240,7 +242,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
   }
 
   return {
-    bus, resolveWorker, workers: () => workerStatus(settings, ledger),
+    bus, resolveWorker, workers: () => workerStatus(config.settings, ledger),
     submit, status, result, wait, cancel, continueJob, summarize, compact, review, recoverOrphans,
     list: f => store.list(f ?? {}).map(m => status(m.id)),
     meta: id => need(id),

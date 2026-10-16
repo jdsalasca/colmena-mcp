@@ -32,3 +32,12 @@ test('buildPrompt includes everything', () => {
   assert.ok(p.includes('src/a.js'));
   assert.ok(p.includes(REPORT_SUFFIX));
 });
+test('buildPrompt prepends configured standards only for run jobs', () => {
+  const standards = { enabled: true, preamble: 'ESTÁNDARES DE PRUEBA' };
+  const run = buildPrompt({ task: 'implementa', kind: 'run', standards });
+  assert.ok(run.startsWith('ESTÁNDARES DE PRUEBA\n\n'));
+  assert.ok(!buildPrompt({ task: 'implementa', kind: 'run' }).includes('ESTÁNDARES DE PRUEBA'));
+  assert.ok(!buildPrompt({ task: 'resume', kind: 'summarize', standards }).includes('ESTÁNDARES DE PRUEBA'));
+  assert.ok(!buildPrompt({ task: 'revisa', kind: 'review', standards }).includes('ESTÁNDARES DE PRUEBA'));
+  assert.ok(!buildPrompt({ task: 'implementa', kind: 'run', standards: { ...standards, enabled: false } }).includes('ESTÁNDARES DE PRUEBA'));
+});
