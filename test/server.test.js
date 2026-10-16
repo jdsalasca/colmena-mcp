@@ -56,13 +56,21 @@ test('lists all tools; no model/effort knobs', async () => {
   } finally { await client.close(); }
 });
 
-test('stats MCP tool aggregates complete metadata from finished jobs', async () => {
-  const { client, call } = await connect();
+test('stats MCP tool applies since_days to persisted jobs', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
   try {
-    const run = await call('run', { task: 'hola', cwd: tmp('luna-stats-'), wait: true });
-    assert.equal(run.state, 'done');
+    const oldRun = await call('run', { task: 'hola viejo', cwd: tmp('luna-stats-old-'), wait: true });
+    const recentRun = await call('run', { task: 'hola reciente', cwd: tmp('luna-stats-new-'), wait: true });
+    assert.equal(oldRun.state, 'done');
+    assert.equal(recentRun.state, 'done');
 
-    const stats = await call('stats', {});
+    const oldMetaPath = path.join(home, 'jobs', oldRun.id, 'meta.json');
+    const oldMeta = JSON.parse(fs.readFileSync(oldMetaPath, 'utf8'));
+    oldMeta.createdAt = Date.now() - 2 * 24 * 60 * 60 * 1000;
+    fs.writeFileSync(oldMetaPath, JSON.stringify(oldMeta));
+
+    const stats = await call('stats', { since_days: 1 });
     assert.equal(stats.totals.jobs, 1);
     assert.equal(stats.totals.done, 1);
     assert.equal(stats.byWorker['luna-max'].runs, 1);
@@ -96,12 +104,13 @@ test('reload_config updates workers, reports a compact diff, and preserves setti
       .replace('  alt: {provider: codex, model: gpt-alt, effort: high, priority: 2}', '  new: {provider: codex, model: gpt-new, priority: 2}')
       .replace('roles: {reporter: luna-max, summarizer: luna-max, reviewer: luna-max}', 'roles: {reporter: luna-max, summarizer: luna-max, reviewer: new}')
       .replace('defaults: {worker: luna-max}', 'defaults: {worker: new, max_parallel: 8}')
-      .replace('plugins:\n  notify: {enabled: false}', 'plugins:\n  notify: {enabled: false}\n  report: {enabled: false}')
+      .replace('plugins:\n  notify: {enabled: false}', 'plugins:\n  notify: {enabled: false}\n  improve: {hints: false}\n  report: {enabled: false}')
       + '\nproviders: {opencode: {isolate_config: false}}\n');
     const diff = await call('reload_config', {});
     assert.deepEqual(diff, {
       added: ['new'], removed: ['alt'], changed: [{ alias: 'luna-max', fields: ['budget.monthly_usd', 'model'] }],
       roles: ['reviewer'], defaults: ['max_parallel', 'worker'], providers: ['opencode.isolate_config'],
+      plugins: ['improve.hints', 'report.enabled'],
     });
     assert.equal((await client.listTools()).tools.some(tool => tool.name === 'report'), false);
     const run = await call('run', { task: 'modelo renovado', worker: 'luna-max', cwd: tmp('luna-reload-c-'), wait: true });

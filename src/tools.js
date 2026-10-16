@@ -38,6 +38,7 @@ function settingsDiff(before, after) {
     roles: changedFields(before.roles, after.roles),
     defaults: changedFields(before.defaults, after.defaults),
     providers: changedFields(before.providers, after.providers),
+    plugins: changedFields(before.plugins, after.plugins),
   };
 }
 
