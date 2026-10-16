@@ -74,7 +74,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     store.audit({ id, kind, worker: worker.name, cwd, isolation: spec.isolation, briefHash: crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 12) });
     let resolve; const promise = new Promise(r => { resolve = r; });
     finished.set(id, { promise, resolve });
-    queue.push({ id, prompt, worker, timeoutMin: config.timeoutMin });
+    queue.push({ id, prompt, worker, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS });
     pump();
     return id;
   }
@@ -84,14 +84,21 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     maxSeen = Math.max(maxSeen, live.size);
   }
 
-  function start({ id, prompt, worker, timeoutMin }) {
+  function start({ id, prompt, worker, timeoutMin, exitGraceS }) {
     const meta = store.update(id, { state: 'running', startedAt: Date.now() });
     const dir = store.jobDir(id);
-    const state = { cancelled: false, timedOut: false, timer: null, handle: null };
+    const state = { cancelled: false, timedOut: false, delivered: false, hasFinalMessage: false, finishedByGrace: false, timer: null, graceTimer: null, handle: null };
     live.set(id, state);
     maxSeen = Math.max(maxSeen, live.size);
     let usage = {}; let lastText = ''; let lastSessionId;
     const adapter = getAdapter(worker.provider);
+    const finishByGrace = message => {
+      if (state.finishedByGrace) return;
+      state.finishedByGrace = true;
+      state.message = message;
+      clearTimeout(state.graceTimer);
+      handle.kill();
+    };
     const handle = startRun(adapter.cmd(config), adapter.buildArgs({
       prompt, workdir: meta.workdir, lastMessagePath: path.join(dir, 'last_message.md'),
       readonly: meta.readonly, resumeSessionId: meta.resumeSessionId, ephemeral: meta.ephemeral, worker,
@@ -100,25 +107,38 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
       env: adapter.env?.(config),
       onEvent: e => {
         if (e.kind === 'session' && e.sessionId !== lastSessionId) { lastSessionId = e.sessionId; store.update(id, { sessionId: e.sessionId }); }
-        else if (e.kind === 'message') lastText = e.text;
-        else if (e.kind === 'usage') for (const [k, v] of Object.entries(e.usage)) if (typeof v === 'number') usage[k] = (usage[k] ?? 0) + v;
+        else if (e.kind === 'message') { lastText = e.text; state.hasFinalMessage = true; }
+        else if (e.kind === 'usage') {
+          for (const [k, v] of Object.entries(e.usage)) if (typeof v === 'number') usage[k] = (usage[k] ?? 0) + v;
+          if (!state.delivered && state.hasFinalMessage && adapter.completesOn?.(e)) {
+            state.delivered = true;
+            state.graceTimer = setTimeout(() => finishByGrace(
+              `El agente entregó su respuesta, pero el proceso no terminó dentro de la gracia de ${exitGraceS} s y fue finalizado.`,
+            ), exitGraceS * 1000);
+          }
+        }
       },
     });
     state.handle = handle;
     store.update(id, { pid: handle.pid });
-    state.timer = setTimeout(() => { state.timedOut = true; handle.kill(); }, timeoutMin * 60000);
+    state.timer = setTimeout(() => {
+      if (state.delivered) finishByGrace('El agente ya había entregado su respuesta al alcanzar el timeout general; el proceso fue finalizado y el job se marcó done.');
+      else { state.timedOut = true; handle.kill(); }
+    }, timeoutMin * 60000);
     bus.emit('job.started', { id, worker: meta.worker, provider: meta.provider ?? 'desconocido', task: meta.task, kind: meta.kind });
     handle.done.then(r => finalize(id, meta, state, r, lastText, usage, worker, timeoutMin));
   }
 
   function finalize(id, meta, state, r, lastText, usage, worker, timeoutMin) {
     clearTimeout(state.timer);
+    clearTimeout(state.graceTimer);
     live.delete(id);
     const dir = store.jobDir(id);
     let text = lastMessage(id);
     if (text == null && lastText) { text = lastText; fs.writeFileSync(path.join(dir, 'last_message.md'), text); }
     let patch = { endedAt: Date.now(), usage };
     if (state.cancelled) patch.state = 'cancelled';
+    else if (state.finishedByGrace) Object.assign(patch, { state: 'done', finishedByGrace: true, message: state.message });
     else if (state.timedOut) Object.assign(patch, { state: 'failed', error: `timeout tras ${timeoutMin} min` });
     else if (r.code === 0) patch.state = 'done';
     else Object.assign(patch, { state: 'failed', error: `codex salió con código ${r.code}: ${r.stderrTail}`.slice(0, 1500) });
@@ -129,7 +149,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     patch.costUsd = costOf(worker, usage);
     try { ledger.record(meta.worker, usage, patch.costUsd); } catch { /* bookkeeping must never break a job */ }
     const updated = store.update(id, patch);
-    bus.emit('job.finished', { id, worker: meta.worker, provider: meta.provider ?? 'desconocido', kind: meta.kind, state: updated.state, task: meta.task, error: updated.error, costUsd: patch.costUsd, usage, startedAt: updated.startedAt, endedAt: updated.endedAt });
+    bus.emit('job.finished', { id, worker: meta.worker, provider: meta.provider ?? 'desconocido', kind: meta.kind, state: updated.state, task: meta.task, error: updated.error, ...(updated.message ? { message: updated.message } : {}), costUsd: patch.costUsd, usage, startedAt: updated.startedAt, endedAt: updated.endedAt });
     finished.get(id)?.resolve();
     pump();
   }
@@ -137,7 +157,7 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
   function status(id) {
     const m = need(id);
     const end = m.endedAt ?? Date.now();
-    return { id, state: m.state, kind: m.kind, worker: m.worker, elapsedS: Math.round((end - (m.startedAt ?? m.createdAt)) / 1000), task: (m.task ?? '').slice(0, 80), ...(m.branch ? { branch: m.branch } : {}), ...(m.note ? { note: m.note } : {}) };
+    return { id, state: m.state, kind: m.kind, worker: m.worker, elapsedS: Math.round((end - (m.startedAt ?? m.createdAt)) / 1000), task: (m.task ?? '').slice(0, 80), ...(m.branch ? { branch: m.branch } : {}), ...(m.note ? { note: m.note } : {}), ...(m.finishedByGrace ? { finishedByGrace: true } : {}), ...(m.message ? { message: m.message } : {}) };
   }
 
   function result(id, { detail = 'min' } = {}) {
@@ -146,6 +166,8 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     const text = lastMessage(id) ?? '';
     const out = { id, state: m.state, kind: m.kind, worker: m.worker, cost_usd: Number((m.costUsd ?? 0).toFixed(4)) };
     if (m.note) out.note = m.note;
+    if (m.finishedByGrace) out.finishedByGrace = true;
+    if (m.message) out.message = m.message;
     if (m.kind === 'run' || m.kind === 'review') {
       const rep = parseReport(text);
       out.reportOk = rep.ok;

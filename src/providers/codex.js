@@ -10,6 +10,7 @@ function parseLine(line) {
 export const codexAdapter = {
   id: 'codex',
   parseLine,
+  completesOn: event => event.kind === 'usage',
   cmd: config => config.codex,
   buildArgs({ prompt, workdir, lastMessagePath, readonly = false, resumeSessionId, ephemeral = false, worker }) {
     const a = ['--search', 'exec'];

@@ -58,6 +58,10 @@ test('codex parseLine verified events and garbage', () => {
   assert.equal(parseLine('{"type":"turn.started"}').kind, 'other');
   assert.equal(parseLine('').kind, 'other');
 });
+test('Codex completion signal is turn usage after a final message', () => {
+  assert.equal(codex.completesOn(codex.parseLine('{"type":"turn.completed","usage":{}}')), true);
+  assert.equal(codex.completesOn(codex.parseLine('{"type":"turn.started"}')), false);
+});
 const run = (c, dir, prompt, extra = {}) => startRun(c.codex, codex.buildArgs({ prompt, workdir: dir, lastMessagePath: path.join(dir, 'last.md'), readonly: true, worker: luna }), { cwd: dir, parseLine: codex.parseLine, logPath: path.join(dir, 'events.jsonl'), onEvent() {}, ...extra });
 
 test('startRun with fake: events, exit 0, -o file, log', async () => {

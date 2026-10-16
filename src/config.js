@@ -52,6 +52,7 @@ export function getConfig(env = process.env) {
     settings,
     maxParallel: Number(e('MAX_PARALLEL')) || settings.defaults.max_parallel,
     timeoutMin: Number(e('JOB_TIMEOUT_MIN')) || settings.defaults.timeout_min,
+    exitGraceS: Number(e('EXIT_GRACE_S')) || settings.defaults.exit_grace_s,
     codex: resolveCmd(e('CODEX_BIN') || newestCodex()),
     opencode: resolveCmd(e('OPENCODE_BIN') || findOpencode()),
     notifier: e('NOTIFIER') || 'toast',
@@ -61,6 +62,7 @@ export function getConfig(env = process.env) {
     config.settings = next;
     config.maxParallel = Number(e('MAX_PARALLEL')) || next.defaults.max_parallel;
     config.timeoutMin = Number(e('JOB_TIMEOUT_MIN')) || next.defaults.timeout_min;
+    config.exitGraceS = Number(e('EXIT_GRACE_S')) || next.defaults.exit_grace_s;
     return next;
   };
   return config;

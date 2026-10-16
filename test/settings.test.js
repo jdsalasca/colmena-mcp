@@ -23,6 +23,7 @@ test('no yml → defaults', () => {
   assert.equal(s.workers['luna-max'].model, 'gpt-6-luna');
   assert.equal(s.workers['luna-max'].effort, 'max');
   assert.equal(s.defaults.worker, 'luna-max');
+  assert.equal(s.defaults.exit_grace_s, 20);
   assert.equal(s.roles.reporter, 'ds-flash');
   assert.equal(s.roles.summarizer, 'ds-flash');
   assert.equal(s.roles.presenter, 'luna-max');
@@ -48,6 +49,10 @@ test('preferences.provider defaults to auto and accepts both providers', () => {
 test('invalid preferences.provider identifies the field', () => {
   const { h, env } = withYml('preferences: {provider: nope}\n');
   assert.throws(() => loadSettings(h, env), /preferences\.provider/);
+});
+test('exit_grace_s has a default and must be positive', () => {
+  const { h, env } = withYml('defaults: {worker: luna-max, exit_grace_s: 0}\n');
+  assert.throws(() => loadSettings(h, env), /defaults\.exit_grace_s/);
 });
 test('yml replaces workers, merges sections', () => {
   const { h, env } = withYml(`

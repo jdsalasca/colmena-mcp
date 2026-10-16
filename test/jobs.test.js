@@ -30,6 +30,24 @@ test('submit → done with ok report', async () => {
   const [r] = (await jm.wait([id])).done;
   assert.equal(r.state, 'done');
   assert.equal(r.report.RESULT.startsWith('ok'), true);
+  assert.equal(jm.meta(id).finishedByGrace, undefined);
+});
+test('Codex delivered output then lingered: grace kills it and preserves done result', async () => {
+  const { jm } = mk({ COLMENA_JOB_TIMEOUT_MIN: '0.02', COLMENA_EXIT_GRACE_S: '0.1' });
+  const id = jm.submit(S('LINGER'));
+  await jm.wait([id], { timeoutS: 10 });
+  const result = jm.result(id);
+  assert.equal(result.state, 'done');
+  assert.equal(jm.meta(id).finishedByGrace, true);
+  assert.match(result.message, /entregó su respuesta/i);
+  assert.throws(() => process.kill(jm.meta(id).pid, 0));
+});
+test('Codex delivery at the general timeout is completed as done', async () => {
+  const { jm } = mk({ COLMENA_JOB_TIMEOUT_MIN: '0.02', COLMENA_EXIT_GRACE_S: '5' });
+  const id = jm.submit(S('LINGER'));
+  await jm.wait([id], { timeoutS: 10 });
+  assert.equal(jm.result(id).state, 'done');
+  assert.equal(jm.meta(id).finishedByGrace, true);
 });
 test('never exceeds maxParallel', async () => {
   process.env.FAKE_DELAY = '300';
@@ -140,14 +158,15 @@ test('reload uses the new worker model for subsequent runs', async () => {
   } finally { delete process.env.FAKE_LOG; }
 });
 test('reload keeps environment parallelism and timeout overrides above YAML values', () => {
-  const { config } = mk({ COLMENA_MAX_PARALLEL: '1', COLMENA_JOB_TIMEOUT_MIN: '7' });
+  const { config } = mk({ COLMENA_MAX_PARALLEL: '1', COLMENA_JOB_TIMEOUT_MIN: '7', COLMENA_EXIT_GRACE_S: '8' });
   const file = path.join(config.home, 'colmena.yml');
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(
-    'defaults: {worker: luna-max}', 'defaults: {worker: luna-max, max_parallel: 6, timeout_min: 1}',
+    'defaults: {worker: luna-max}', 'defaults: {worker: luna-max, max_parallel: 6, timeout_min: 1, exit_grace_s: 2}',
   ));
   config.reloadSettings();
   assert.equal(config.maxParallel, 1);
   assert.equal(config.timeoutMin, 7);
+  assert.equal(config.exitGraceS, 8);
 });
 test('continue fails clearly when its previous worker was removed by reload', async () => {
   const { jm, config } = mk();
