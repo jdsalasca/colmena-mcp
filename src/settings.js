@@ -37,6 +37,7 @@ const Notify = z.object({
   enabled: z.boolean().default(true),
   on: z.array(z.enum(['start', 'finish', 'fail'])).default(['start', 'finish', 'fail']),
   heartbeat_min: z.number().positive().default(10),
+  budget_pct: z.number().int().min(0).max(100).default(80),
 });
 const Report = z.object({ enabled: z.boolean().default(true), default_style: z.string().default('papercraft') });
 const Present = z.object({ enabled: z.boolean().default(true), default_style: z.string().default('papercraft-deck') });

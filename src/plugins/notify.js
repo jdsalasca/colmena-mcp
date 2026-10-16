@@ -32,7 +32,8 @@ export function formatOverview(active, queued) {
   return `En curso: ${overview.join(' · ')}`;
 }
 
-// Subscribes to the job bus: grouped start toasts, finish/fail toasts, and a heartbeat while work is running.
+// Subscribes to the job bus: grouped start toasts, finish/fail toasts, a heartbeat while work is running,
+// and one budget alert per worker and crossing (threshold or exhaustion) for the life of the process.
 export function notifyPlugin({
   bus, jm, cfg, notifier, heartbeatMs, debounceMs = 2000, logPath,
   setIntervalFn = setInterval, clearIntervalFn = clearInterval,
@@ -42,6 +43,7 @@ export function notifyPlugin({
   let spent = 0;
   const bufs = { start: [], finish: [], fail: [] };
   const timers = { start: null, finish: null, fail: null };
+  const crossed = new Set();
   let beat = null;
 
   const emit = n => {
@@ -52,7 +54,7 @@ export function notifyPlugin({
         fs.appendFileSync(logPath, `${new Date().toISOString()} [${n.kind}] ${n.title}: ${n.body}\n`);
       } catch { /* log is best-effort */ }
     }
-    if (n.kind === 'heartbeat' || on.has(n.kind)) {
+    if (n.kind === 'heartbeat' || n.kind === 'budget' || on.has(n.kind)) {
       try { notifier.send(n); } catch { /* never let a toast break the server */ }
     }
   };
@@ -93,10 +95,34 @@ export function notifyPlugin({
     timers[kind].unref?.();
   };
 
+  // Committed = spent + reserved, read per finished job from the same workerStatus rows the router uses.
+  const checkBudget = workerName => {
+    const pct = current.budget_pct ?? 80;
+    if (!pct) return;
+    const row = (jm.workers?.() ?? []).find(w => w.alias === workerName);
+    if (!row || row.free || row.budget_usd == null) return;
+    const committed = row.spent_usd + row.reserved_usd;
+    const level = committed >= row.budget_usd ? 'exhausted' : committed >= row.budget_usd * pct / 100 ? 'warn' : null;
+    if (!level) return;
+    const key = `${row.alias}:${level}`;
+    if (crossed.has(key)) return;
+    crossed.add(key);
+    if (level === 'exhausted') crossed.add(`${row.alias}:warn`);
+    const detail = `$${committed.toFixed(2)} de $${row.budget_usd.toFixed(2)}`;
+    emit({
+      kind: 'budget',
+      title: level === 'exhausted' ? 'Colmena · presupuesto agotado' : 'Colmena · presupuesto',
+      body: withOverview(level === 'exhausted'
+        ? `worker ${row.alias} agotó su presupuesto: ${detail}`
+        : `worker ${row.alias} cruzó el ${pct}% de su presupuesto: ${detail}`),
+    });
+  };
+
   const onStart = e => push('start', e);
   const onFinish = e => {
     spent += e.costUsd ?? 0;
     push(e.state === 'failed' || e.state === 'orphaned' ? 'fail' : 'finish', e);
+    checkBudget(e.worker);
   };
   bus.on('job.started', onStart);
   bus.on('job.finished', onFinish);
