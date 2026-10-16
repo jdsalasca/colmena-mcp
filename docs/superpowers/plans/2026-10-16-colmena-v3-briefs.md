@@ -41,3 +41,33 @@ Repo `colmena-mcp` (Node 24 ESM, `node --test`, zod, `@modelcontextprotocol/sdk`
 
 ## Orden y validación (lo hace el orquestador)
 1. `workers` → `run_many` con A y B (worktrees distintos). 2. `wait` → `result` → `review` de cada rama. 3. Merge de A y luego B (puede haber conflicto en `src/tools.js`/`test/server.test.js`: resolver manteniendo ambas tools; correr `npm test`). 4. `report` de la ronda (papercraft) y `improve all` sobre `colmena-mcp` como primer backlog real. 5. Actualizar README/skill (hecho por Luna dentro de cada brief si aplica).
+
+---
+
+## Ronda 1 (automejora): briefs C, D y E
+
+> Estado: el Brief A ya está integrado en `develop`. El Brief B (`improve`) sigue pendiente. Los agentes parten de `develop`.
+
+### Brief C — `stats`: datos para automejorar + internet explícito
+
+**Objetivo:** que colmena **recolecte y resuma datos de uso** (para que el orquestador y el agente `improve` decidan qué mejorar) y que los agentes sepan que tienen internet.
+
+**Requisitos**
+- Módulo puro nuevo `src/stats.js` con `computeStats(metas, {sinceMs, now})` → `{range, totals:{jobs, done, failed, cancelled, orphaned, successRate, costUsd, durationS}, byWorker:{[alias]:{runs, done, failed, successRate, avgDurationS, costUsd, inputTokens, outputTokens}}, byKind:{...}, topFailures:[{error, count}] (máx 5, mensajes truncados y agrupados)}`. Lee metas del store (`jm.list` no basta: añade un método mínimo al JobManager o al store para obtener las metas completas, sin duplicar lógica de lectura).
+- Nueva tool MCP `stats {since_days?: number}` (defecto 30) que devuelve ese objeto, compacto. Gateada por nada (siempre disponible).
+- `DEFAULT_STANDARDS_PREAMBLE` (en `src/settings.js`) añade una línea: tienen **internet** (búsqueda web en vivo / webfetch): consultar documentación y versiones actuales cuando dependan de una API o dato externo, citando la fuente. Actualiza README (sección de seguridad/agentes: "los agentes tienen internet por defecto: Codex con `--search`, OpenCode con webfetch").
+- Gestión de datos faltantes: jobs sin `startedAt/endedAt` o sin `costUsd` cuentan 0 sin lanzar excepción; lista vacía → totales en cero y `successRate: null`.
+
+**Tests primero:** `computeStats` con un conjunto fabricado (varios workers/kinds/estados, agrupación de errores, ventana `sinceMs`, metas incompletas, lista vacía); la tool `stats` por el servidor MCP (actualiza `NAMES` en `test/server.test.js`); settings: el preámbulo por defecto menciona internet.
+
+### Brief D — Prueba de `max-hive`: dedupe de escrituras de sesión (tarea pequeña y mecánica)
+
+**Objetivo:** en `src/jobs.js`, `onEvent` llama `store.update(id, {sessionId})` en **cada** evento `session` (OpenCode emite uno por paso, Codex uno). Debe escribir solo cuando el `sessionId` cambia.
+
+**Requisitos:** cambio mínimo y limpio (una variable local por job); sin tocar nada más. **Tests primero** (en `test/opencode.test.js` o `test/jobs.test.js`): con el fake de OpenCode emitiendo varios `step_start` con el mismo sessionID, `store.update` con `sessionId` se invoca una sola vez (espía `createStore` o cuenta escrituras de `meta.json` con un wrapper inyectable; elige lo más simple y estable) y el sessionId final es correcto. `npm test` verde.
+
+### Brief E — Ronda de brainstorming (solo lectura, sin código)
+
+**Objetivo:** aplicar el skill `superpowers:brainstorming` (si lo tienes) para proponer mejoras a colmena-mcp basadas en **datos reales**. Lee: `README.md`, `src/`, `test/`, los specs/planes en `docs/superpowers/`, y los datos de uso en `~/.colmena/` (`audit.log`, `usage.json`, `jobs/*/meta.json`; ignora jobs de prueba con home temporal). Identifica problemas observados (p. ej. un agente de Codex fusionó a `develop` y borró su worktree por instrucciones globales; cleanup falló al borrar una carpeta en Windows; Codex no reporta costo; wait máximo 10 min vs jobs de 10+ min).
+
+**Entrega (en el mensaje final, ≤15 líneas; no modifiques archivos):** top 8 mejoras priorizadas por (impacto / esfuerzo), cada una con: título, evidencia (dato o archivo concreto), y un brief de 2 líneas listo para delegar con enfoque TDD / código limpio / DRY. Incluye al menos 2 ideas de *nuevas features* y 2 de *deuda técnica*.
