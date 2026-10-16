@@ -487,6 +487,38 @@ test('preferences conserva archivo y memoria si falla el rename', async () => {
   }
 });
 
+test('MC-7: diff.patch se publica con writeFileAtomic: rename fallido conserva el previo y no deja .tmp', async () => {
+  const home = codexOnlyHome();
+  const config = getConfig({ ...process.env, ...baseEnv(home) });
+  const { server } = buildServer(config, {
+    atomicWriteDependencies: { renameSync: () => { throw new Error('rename failure for test'); } },
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'injected-test', version: '0' });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const call = async (name, args) => {
+    const r = await client.callTool({ name, arguments: args });
+    const text = r.content[0].text;
+    return r.isError ? { error: text } : JSON.parse(text);
+  };
+  try {
+    const repo = tmp('luna-diff-atomic-');
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n'); git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'i');
+    const job = await call('run', { task: 'EDIT uno', cwd: repo, wait: true });
+    assert.equal(job.state, 'done');
+    const d = await call('diff', { job_id: job.id, max_chars: 20 });
+    assert.match(d.error, /rename failure for test/);
+    const jobDir = path.join(home, 'jobs', job.id);
+    assert.deepEqual(fs.readdirSync(jobDir).filter(name => name.endsWith('.tmp')), []);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
 test('preferences falls back across providers with a note, and reload_config reads manual edits', async () => {
   const { home, file } = providerHome({ codexEnabled: false });
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('provider: auto', 'provider: codex'));

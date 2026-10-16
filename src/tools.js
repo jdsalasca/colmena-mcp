@@ -127,7 +127,7 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
 
   const reportTool = tool('report', 'Genera un reporte HTML bonito de lo logrado por los jobs indicados (ronda final). El worker del rol reporter lo redacta con el estilo elegido (defecto papercraft); si falla, se usa un renderizador de respaldo. Devuelve la ruta del HTML.',
     { job_ids: z.array(z.string()).min(1), style: z.string().optional().describe('Nombre de estilo (carpeta styles/<nombre>); defecto: plugins.report.default_style'), title: z.string().optional(), subtitle: z.string().optional(), open: z.boolean().optional().describe('Abrir en el navegador al terminar') },
-    a => generateReport({ jm, config, ids: a.job_ids, style: a.style, title: a.title, subtitle: a.subtitle, open: a.open }));
+    a => generateReport({ jm, config, ids: a.job_ids, style: a.style, title: a.title, subtitle: a.subtitle, open: a.open, atomicWriteDependencies }));
   if (!config.settings.plugins.report.enabled) reportTool.disable();
 
   const presentTool = tool('present', 'Genera una presentación HTML autocontenida en estilo papercraft para cerrar un hito; el rol presenter la redacta y, si falla, se crea un respaldo determinista.',
@@ -137,7 +137,7 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
       style: z.string().optional().describe('Nombre de estilo (carpeta styles/<nombre>); defecto: plugins.present.default_style'),
       open: z.boolean().optional().describe('Abrir en el navegador al terminar'),
     },
-    a => generatePresentation({ jm, config, ids: a.job_ids, title: a.title, subtitle: a.subtitle, notes: a.notes, style: a.style, open: a.open }));
+    a => generatePresentation({ jm, config, ids: a.job_ids, title: a.title, subtitle: a.subtitle, notes: a.notes, style: a.style, open: a.open, atomicWriteDependencies }));
   if (!config.settings.plugins.present.enabled) presentTool.disable();
 
   const improveTool = tool('improve', 'Mejora continua: un agente analiza el repo en un worktree y escribe docs/backlog/<fecha>-<focus>.md con ítems priorizados (impacto, esfuerzo, riesgo) y briefs listos para delegar con TDD y DRY.',
@@ -221,7 +221,7 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
     const full = iso.diff(m.workdir, m.base, 50_000_000);
     const d = { text: full.text.slice(0, max), truncated: full.text.length > max };
     const out = { text: d.text, truncated: d.truncated };
-    if (d.truncated) { const f = path.join(jm.jobDir(a.job_id), 'diff.patch'); fs.writeFileSync(f, full.text); out.fullPath = f; }
+    if (d.truncated) { const f = path.join(jm.jobDir(a.job_id), 'diff.patch'); writeFileAtomic(f, full.text, atomicWriteDependencies); out.fullPath = f; }
     return out;
   });
 
