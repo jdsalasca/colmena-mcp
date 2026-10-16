@@ -242,5 +242,6 @@ export function createJobManager(config, { bus = new EventEmitter() } = {}) {
     mark: (id, patch) => store.update(id, patch),
     jobDir: store.jobDir,
     stats: () => ({ running: live.size, queued: queue.length, maxSeen }),
+    active: () => [...live.keys()].map(id => store.get(id)).filter(Boolean),
   };
 }

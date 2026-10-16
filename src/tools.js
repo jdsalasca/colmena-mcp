@@ -4,6 +4,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { createJobManager } from './jobs.js';
 import * as iso from './isolation.js';
+import { notifyPlugin } from './plugins/notify.js';
+import { createNotifier } from './notifier.js';
 
 const TERMINAL = new Set(['done', 'failed', 'cancelled', 'orphaned']);
 const isolationEnum = z.enum(['worktree', 'inplace', 'readonly']).optional()
@@ -22,6 +24,8 @@ const taskShape = {
 export function buildServer(config) {
   const jm = createJobManager(config);
   jm.recoverOrphans();
+  const nc = config.settings.plugins.notify;
+  const notify = nc.enabled ? notifyPlugin({ bus: jm.bus, jm, cfg: nc, notifier: createNotifier(config.notifier), logPath: config.activityPath }) : null;
   const server = new McpServer({ name: 'colmena', version: '0.2.0' });
 
   const ok = obj => ({ content: [{ type: 'text', text: JSON.stringify(obj) }] });
@@ -100,5 +104,5 @@ export function buildServer(config) {
       return iso.cleanup(config, { id: a.job_id, olderThanDays: a.older_than_days });
     });
 
-  return { server, jm };
+  return { server, jm, notify };
 }
