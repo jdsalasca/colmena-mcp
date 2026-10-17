@@ -54,7 +54,6 @@ test('decorated headers (bold/heading/list/backticks, lowercase, colon spacing) 
     '* RESULT: hecho',
     '*RESULT*: hecho',
     'result: hecho',
-    '## RESULT hecho',
     '- **RESULT:** hecho',
   ];
   for (const header of cases) {
@@ -119,6 +118,40 @@ test('empty sections present are still ok', () => {
   assert.equal(r.ok, true);
   assert.equal(r.sections.RESULT, '');
   assert.equal(r.sections.FILES, '');
+});
+
+test('keyword followed by free text without colon is not a header (real values kept)', () => {
+  const r1 = parseReport('RESULT: listo\nResult of the migration was fine.\nFILES: a.js\nTESTS: ok\nRISKS: no');
+  assert.equal(r1.ok, true);
+  assert.equal(r1.sections.RESULT, 'listo\nResult of the migration was fine.');
+  const r2 = parseReport('RESULT: hecho\nTests ejecutados en CI y verdes.\nFILES: a.js\nTESTS: 3/3\nRISKS: ninguno');
+  assert.equal(r2.ok, true);
+  assert.equal(r2.sections.RESULT, 'hecho\nTests ejecutados en CI y verdes.');
+  assert.equal(r2.sections.TESTS, '3/3');
+  const r3 = parseReport('RESULT: x\nFILES: a.js\nTESTS: t\nRISKS: baja\nRisks remain low overall.');
+  assert.equal(r3.ok, true);
+  assert.equal(r3.sections.RISKS, 'baja\nRisks remain low overall.');
+  const r4 = parseReport('RESULT: x\n- files touched in this PR\nFILES: a.js\nTESTS: t\nRISKS: r');
+  assert.equal(r4.ok, true);
+  assert.equal(r4.sections.RESULT, 'x\n- files touched in this PR');
+});
+
+test('keyword followed by free text after decoration is not a header', () => {
+  const r = parseReport('## RESULT hecho\nFILES: a.js\nTESTS: t\nRISKS: r');
+  assert.equal(r.ok, false);
+  assert.equal('RESULT' in r.sections, false);
+});
+
+test('keyword-only decorated header without colon is a header', () => {
+  const r1 = parseReport('## RESULT\nFILES: a.js\nTESTS: t\nRISKS: r');
+  assert.equal(r1.ok, true);
+  assert.equal(r1.sections.RESULT, '');
+  const r2 = parseReport('**RESULT**\nFILES: a.js\nTESTS: t\nRISKS: r');
+  assert.equal(r2.ok, true);
+  assert.equal(r2.sections.RESULT, '');
+  const r3 = parseReport('- FILES\nRESULT: x\nTESTS: t\nRISKS: r');
+  assert.equal(r3.ok, true);
+  assert.equal(r3.sections.FILES, '');
 });
 
 test('worktree run jobs get git rules naming the branch; other jobs do not', () => {

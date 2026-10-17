@@ -18,7 +18,7 @@ export function buildPrompt({ task, contextFiles = [], handoff = [], kind = 'run
 const BLOCK_MARKER_RE = /^[ \t]*(?:(?:#{1,6}|[-*+])[ \t]+)+/;
 const EMPHASIS_RE = /^(?:\*{1,3}|_+|`{1,3})/;
 const WHOLE_EMPHASIS_RE = /^(\*{1,3}|_+|`{1,3})(.+)\1$/;
-const KEY_RE = /^(RESULT|FILES|TESTS|RISKS)(?=\s|:|$|\*{1,3}|_+|`{1,3})/i;
+const KEY_RE = /^(RESULT|FILES|TESTS|RISKS)(?=\s*(?:\*{1,3}|_+|`{1,3})*\s*:|\s*$)/i;
 const COLON_SPACES_RE = /^[ \t]*:?[ \t]*/;
 
 function unwrapEmphasis(text) {
