@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { getConfig } from '../src/config.js';
 import { createJobManager } from '../src/jobs.js';
 import { writeFileAtomic } from '../src/atomic-write.js';
+import { isProcessAlive } from '../src/runner.js';
 
 const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
@@ -608,9 +609,15 @@ plugins: {notify: {enabled: false}}
 }
 const mc4 = (env = {}) => createJobManager(getConfig({ ...baseEnv(retryHome(), env), COLMENA_OPENCODE_BIN: fakeOpencode }));
 // Stall thresholds in tenths of a second: 0.005 min = 300 ms, well below the general timeout.
-const stallJobs = (env = {}, options) => createJobManager(getConfig({
+// The empty snapshot keeps the watchdog deterministic (no PowerShell) and reports zero CPU activity.
+const stallJobs = (env = {}, options = {}) => createJobManager(getConfig({
   ...baseEnv(retryHome(options), { COLMENA_STALL_TIMEOUT_MIN: '0.005', ...env }), COLMENA_OPENCODE_BIN: fakeOpencode,
-}));
+}), { snapshot: () => [], ...options });
+function stalledManager({ snapshot, now }) {
+  return createJobManager(getConfig({
+    ...baseEnv(retryHome(), { COLMENA_STALL_TIMEOUT_MIN: '0.005' }), COLMENA_OPENCODE_BIN: fakeOpencode,
+  }), { snapshot, now });
+}
 
 test('MC-4: un job fallido se relanza con retry y termina done con el brief original íntegro', async () => {
   const log = path.join(tmp('luna-retry-log-'), 'fake.log'); process.env.FAKE_LOG = log;
@@ -763,7 +770,7 @@ test('MC-11: un job mudo se mata por inactividad, falla con error claro y sin ll
   await jm.wait([id], { timeoutS: 20 });
   const r = jm.result(id);
   assert.equal(r.state, 'failed');
-  assert.equal(r.error, 'sin actividad durante 0.005 min; el proveedor no respondió');
+  assert.equal(r.error, 'sin eventos ni actividad de CPU durante 0.005 min');
   assert.equal(jm.meta(id).timedOut, undefined);
   assert.equal(jm.meta(id).retries, 0);
   assert.ok(Date.now() - started < 5000, 'el vigilante debe cortar mucho antes del timeout general de 60 min');
@@ -778,7 +785,7 @@ test('MC-11: el cuelgue mudo cuenta como error transitorio y se reintenta una ve
     await jm.wait([id], { timeoutS: 30 });
     const r = jm.result(id);
     assert.equal(r.state, 'failed');
-    assert.equal(r.error, 'sin actividad durante 0.005 min; el proveedor no respondió');
+    assert.equal(r.error, 'sin eventos ni actividad de CPU durante 0.005 min');
     assert.equal(jm.meta(id).retries, 1);
     assert.equal(fs.readFileSync(log, 'utf8').trim().split('\n').length, 2, 'debe haber un intento nuevo tras el cuelgue');
   } finally { delete process.env.FAKE_LOG; }
@@ -824,6 +831,86 @@ test('MC-11: stall_timeout_min 0 desactiva el vigilante', async () => {
   await jm.cancel(id);
   await jm.wait([id], { timeoutS: 20 });
   assert.equal(jm.status(id).state, 'cancelled');
+});
+
+test('MC-11: un job mudo con actividad de CPU en su árbol no se mata hasta que la actividad cesa', async () => {
+  let clock = 0;
+  const ticker = setInterval(() => { clock += 1000; }, 20);
+  let active = true;
+  let rootPid;
+  const snapshot = () => [
+    { pid: rootPid, ppid: 0, name: 'agent', created: 1, cpuMs: 5 },
+    { pid: rootPid + 1, ppid: rootPid, name: 'worker', created: 2, cpuMs: active ? 10 + clock : 20 },
+  ];
+  const jm = stalledManager({ snapshot, now: () => clock });
+  let id;
+  try {
+    id = jm.submit(S('MUTE'));
+    rootPid = jm.meta(id).pid;
+    await new Promise(resolve => setTimeout(resolve, 900));
+    assert.equal(jm.status(id).state, 'running', 'la CPU del hijo debe reiniciar el contador');
+    active = false;
+    await jm.wait([id], { timeoutS: 10 });
+    assert.equal(jm.result(id).state, 'failed');
+    assert.equal(jm.result(id).error, 'sin eventos ni actividad de CPU durante 0.005 min');
+  } finally {
+    clearInterval(ticker);
+    try { await jm.cancel(id); } catch {}
+    jm.shutdown();
+  }
+});
+
+test('MC-11: un job mudo sin actividad de CPU falla con el motivo de eventos y CPU', async () => {
+  let clock = 0;
+  const ticker = setInterval(() => { clock += 1000; }, 20);
+  let rootPid;
+  const snapshot = () => [
+    { pid: rootPid, ppid: 0, name: 'agent', created: 1, cpuMs: 5 },
+    { pid: rootPid + 1, ppid: rootPid, name: 'idle', created: 2, cpuMs: 10 },
+  ];
+  const jm = stalledManager({ snapshot, now: () => clock });
+  let id;
+  try {
+    id = jm.submit(S('MUTE'));
+    rootPid = jm.meta(id).pid;
+    await jm.wait([id], { timeoutS: 10 });
+    assert.equal(jm.result(id).state, 'failed');
+    assert.equal(jm.result(id).error, 'sin eventos ni actividad de CPU durante 0.005 min');
+  } finally {
+    clearInterval(ticker);
+    try { await jm.cancel(id); } catch {}
+    jm.shutdown();
+  }
+});
+
+test('cancel mata un nieto desacoplado aunque su proceso intermedio ya murió', async () => {
+  const pidFile = path.join(tmp('luna-orphan-'), 'pids.json');
+  process.env.FAKE_ORPHAN_PID_FILE = pidFile;
+  process.env.FAKE_ORPHAN_LIFE_MS = '4000';
+  let jm;
+  let pids;
+  try {
+    const config = getConfig({ ...baseEnv(retryHome()), COLMENA_OPENCODE_BIN: fakeOpencode });
+    jm = createJobManager(config, { treeIntervalMs: 500 });
+    const id = jm.submit(S('ORPHAN'));
+    await until(() => fs.existsSync(pidFile), 'el fake debe publicar los PID del árbol');
+    pids = JSON.parse(fs.readFileSync(pidFile, 'utf8'));
+    await until(() => !isProcessAlive(pids.intermediate), 'el proceso intermedio debe morir primero', 12_000);
+    assert.equal(isProcessAlive(pids.grandchild), true, 'el nieto debe seguir vivo antes de cancelar');
+    await jm.cancel(id);
+    await jm.wait([id], { timeoutS: 20 });
+    assert.equal(jm.result(id).state, 'cancelled');
+    assert.equal(isProcessAlive(pids.grandchild), false, 'el nieto desacoplado debe quedar muerto');
+    assert.ok(jm.meta(id).killedPids.includes(pids.grandchild), 'meta debe registrar el nieto matado');
+    assert.deepEqual(jm.meta(id).survivors, []);
+  } finally {
+    delete process.env.FAKE_ORPHAN_PID_FILE;
+    delete process.env.FAKE_ORPHAN_LIFE_MS;
+    if (pids && isProcessAlive(pids.grandchild)) {
+      try { execFileSync('taskkill', ['/PID', String(pids.grandchild), '/T', '/F'], { stdio: 'ignore' }); } catch {}
+    }
+    jm?.shutdown();
+  }
 });
 
 test('MC-11: verdict rechaza un job vivo y no escribe el veredicto', async () => {
