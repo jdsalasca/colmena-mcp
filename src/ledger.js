@@ -9,14 +9,14 @@ const EMPTY = () => ({ runs: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0 }
 // cannot lose updates. Acquisition is fail-soft: retries are short, a lock older than `staleMs` or
 // whose owner PID is gone is stolen, and after `timeoutMs` the mutation runs anyway (bookkeeping must
 // never block or break a job). Reads stay lock-free because writes are published atomically.
-const LOCK_DEFAULTS = { staleMs: 10_000, timeoutMs: 2_000, retryMs: 10 };
+export const LOCK_DEFAULTS = { staleMs: 10_000, timeoutMs: 2_000, retryMs: 10 };
 // Keep retries frequent while contended: a hot holder releases for less than a millisecond, so a
 // long backoff would starve the loser until the fail-soft deadline.
 const LOCK_RETRY_CAP_MS = 25;
 
 const sleep = ms => { if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
 
-const isStale = (lockPath, staleMs) => {
+export const isStale = (lockPath, staleMs) => {
   let stat;
   try { stat = fs.statSync(lockPath); } catch { return false; }
   if (Date.now() - stat.mtimeMs > staleMs) return true;
