@@ -826,6 +826,19 @@ test('MC-11: stall_timeout_min 0 desactiva el vigilante', async () => {
   assert.equal(jm.status(id).state, 'cancelled');
 });
 
+test('MC-11: verdict rechaza un job vivo y no escribe el veredicto', async () => {
+  const { jm } = mk();
+  const id = jm.submit(S('SLEEP'));
+  try {
+    assert.ok(['queued', 'running'].includes(jm.status(id).state));
+    assert.throws(() => jm.verdict(id, { verdict: 'accepted' }), /sigue (queued|running)/);
+    assert.equal(jm.meta(id).verdict, undefined);
+  } finally {
+    await jm.cancel(id); await jm.wait([id], { timeoutS: 20 });
+  }
+  assert.equal(jm.meta(id).verdict, undefined);
+});
+
 test('MC-4: brief.md se publica con writeArtifact y sobrevive al arranque del job', async () => {
   const config = getConfig(baseEnv(codexOnlyHome()));
   const calls = [];

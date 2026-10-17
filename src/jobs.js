@@ -475,7 +475,8 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
   }
 
   function verdict(id, { verdict: value, note } = {}) {
-    need(id);
+    const m = need(id);
+    if (!TERMINAL.has(m.state)) throw new Error(`job ${id} sigue ${m.state}; espera a que termine`);
     if (!VERDICTS.has(value)) throw new Error(`veredicto inválido '${value}': usa accepted o needs_work`);
     const at = Date.now();
     store.update(id, { verdict: value, verdictNote: note ?? null, verdictAt: at });
