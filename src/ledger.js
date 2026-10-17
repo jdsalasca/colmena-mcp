@@ -90,6 +90,20 @@ export function createLedger(config, { now = () => new Date(), lock = {} } = {})
     },
     month(worker) { return read()[ym()]?.[worker] ?? EMPTY(); },
     spent(worker) { return this.month(worker).cost_usd; },
+    allocationCounts(profile) { return { ...(read().profile_assignments?.[ym()]?.[profile] ?? {}) }; },
+    allocate(profile, selectAlias) {
+      return mutate(() => {
+        const all = read();
+        const counts = all.profile_assignments?.[ym()]?.[profile] ?? {};
+        const alias = selectAlias({ ...counts });
+        if (typeof alias !== 'string' || !alias) return null;
+        const monthly = (all.profile_assignments ??= {})[ym()] ??= {};
+        const byWorker = monthly[profile] ??= {};
+        byWorker[alias] = (Number.isInteger(byWorker[alias]) ? byWorker[alias] : 0) + 1;
+        write(all);
+        return alias;
+      });
+    },
     reserve(id, worker, amount) {
       return mutate(() => {
         const all = read();

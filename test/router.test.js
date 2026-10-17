@@ -5,10 +5,10 @@ import path from 'node:path';
 import { getConfig } from '../src/config.js';
 import { createJobManager } from '../src/jobs.js';
 import { createLedger } from '../src/ledger.js';
-import { pickWorker, workerStatus } from '../src/router.js';
+import { chooseWorker, pickWorker, workerStatus } from '../src/router.js';
 import { loadSettings } from '../src/settings.js';
 import { computeStats } from '../src/stats.js';
-import { baseEnv, tmp, fakeOpencode, until } from './helpers.js';
+import { baseEnv, tmp, fakeCodex, fakeOpencode, until } from './helpers.js';
 
 const settingsFor = yml => { const h = tmp('colmena-rt-'); fs.writeFileSync(path.join(h, 'colmena.yml'), yml); return loadSettings(h, {}); };
 const YML = `
@@ -87,6 +87,107 @@ defaults: {worker: a}
 `);
   const l = ledgerFor(); l.record('a', {}, 2);
   assert.throws(() => pickWorker(s, l, {}), /ningún worker disponible/);
+});
+
+const mixSettings = () => settingsFor(`
+workers:
+  luna: {provider: codex, model: m1, priority: 1, strengths: [code]}
+  flash: {provider: opencode, model: m2, priority: 2, strengths: [code, docs]}
+  hive: {provider: opencode, model: m3, priority: 9, strengths: [bulk]}
+  backup: {provider: codex, model: m4, priority: 10, strengths: [code]}
+roles: {reporter: luna, summarizer: luna, reviewer: luna, presenter: luna}
+defaults: {worker: backup}
+profiles: {balanced: {mix: {luna: 1, flash: 1, hive: 2}}}
+preferences: {profile: balanced}
+`);
+
+test('mix profile routes eight jobs in exact 1:1:2 shares and preview does not count', () => {
+  const settings = mixSettings();
+  const ledger = ledgerFor();
+  assert.equal(chooseWorker(settings, ledger).alias, 'luna');
+  assert.deepEqual(ledger.allocationCounts('balanced'), {});
+
+  const selected = Array.from({ length: 8 }, () => chooseWorker(settings, ledger, { commitAllocation: true }).alias);
+  assert.deepEqual(Object.fromEntries(['luna', 'flash', 'hive'].map(alias => [alias, selected.filter(worker => worker === alias).length])), {
+    luna: 2, flash: 2, hive: 4,
+  });
+  assert.deepEqual(ledger.allocationCounts('balanced'), { luna: 2, flash: 2, hive: 4 });
+  const shares = Object.fromEntries(workerStatus(settings, ledger).map(row => [row.alias, row.profile_share]));
+  assert.deepEqual(shares, { luna: 0.25, flash: 0.25, hive: 0.5, backup: 0 });
+});
+
+test('JobManager reparte ocho jobs en 2/2/4 y conserva los conteos en usage.json', async () => {
+  const home = tmp('colmena-mix-jobs-');
+  fs.writeFileSync(path.join(home, 'colmena.yml'), `
+workers:
+  luna: {provider: codex, model: m1, priority: 1}
+  flash: {provider: opencode, model: m2, priority: 2}
+  hive: {provider: opencode, model: m3, priority: 9, strengths: [bulk]}
+roles: {reporter: luna, summarizer: luna, reviewer: luna, presenter: luna}
+defaults: {worker: luna, max_parallel: 4}
+profiles: {balanced: {mix: {luna: 1, flash: 1, hive: 2}}}
+preferences: {profile: balanced}
+plugins: {notify: {enabled: false}}
+`);
+  const config = getConfig({ ...baseEnv(home), COLMENA_CODEX_BIN: fakeCodex, COLMENA_OPENCODE_BIN: fakeOpencode });
+  const jm = createJobManager(config);
+  try {
+    const ids = Array.from({ length: 8 }, (_, i) => jm.submit({ task: `job ${i}`, cwd: tmp('colmena-mix-job-c-'), isolation: 'inplace' }));
+    await jm.wait(ids);
+    assert.deepEqual(Object.fromEntries(['luna', 'flash', 'hive'].map(alias => [alias, ids.filter(id => jm.meta(id).worker === alias).length])), {
+      luna: 2, flash: 2, hive: 4,
+    });
+    assert.deepEqual(createLedger(config).allocationCounts('balanced'), { luna: 2, flash: 2, hive: 4 });
+  } finally { await cancelAll(jm); }
+});
+
+test('mix profile skips disabled members with a note and falls back when all mix members are unavailable', () => {
+  const settings = mixSettings();
+  settings.workers.luna.enabled = false;
+  settings.workers.flash.enabled = false;
+  settings.workers.hive.enabled = false;
+  const ledger = ledgerFor();
+  const fallback = chooseWorker(settings, ledger, { commitAllocation: true });
+  assert.equal(fallback.alias, 'backup');
+  assert.match(fallback.note, /balanced.*sin workers disponibles.*ruteo normal/i);
+  assert.equal(ledger.allocationCounts('balanced').hive ?? 0, 0);
+
+  settings.workers.flash.enabled = true;
+  const partial = chooseWorker(settings, ledger, { commitAllocation: true });
+  assert.equal(partial.alias, 'flash');
+  assert.match(partial.note, /luna.*deshabilitado/i);
+  assert.deepEqual(ledger.allocationCounts('balanced'), { flash: 1 });
+});
+
+test('mix profile gives kind bulk preference within the mix and counts the selected worker', () => {
+  const settings = mixSettings();
+  const ledger = ledgerFor();
+  const selection = chooseWorker(settings, ledger, { kind: 'bulk', commitAllocation: true });
+  assert.equal(selection.alias, 'hive');
+  assert.deepEqual(ledger.allocationCounts('balanced'), { hive: 1 });
+});
+
+test('explicit worker overrides the active mix and does not change its allocation counts', () => {
+  const settings = mixSettings();
+  const ledger = ledgerFor();
+  assert.deepEqual(chooseWorker(settings, ledger, { worker: 'backup', commitAllocation: true }), { alias: 'backup' });
+  assert.deepEqual(ledger.allocationCounts('balanced'), {});
+});
+
+test('provider profile changes the implicit route while explicit worker remains authoritative', () => {
+  const settings = settingsFor(`
+workers:
+  codex: {provider: codex, model: m1, priority: 1}
+  oc: {provider: opencode, model: m2, priority: 2}
+roles: {reporter: codex, summarizer: codex, reviewer: codex, presenter: codex}
+defaults: {worker: codex}
+profiles: {remote: {provider: opencode}}
+preferences: {profile: remote}
+`);
+  const ledger = ledgerFor();
+  assert.equal(pickWorker(settings, ledger, {}), 'oc');
+  assert.equal(workerStatus(settings, ledger).find(row => row.alias === 'oc').preferred, true);
+  assert.equal(pickWorker(settings, ledger, { worker: 'codex' }), 'codex');
 });
 
 test('JobManager: cost recorded, budget exhausts, routing falls to next worker', async () => {

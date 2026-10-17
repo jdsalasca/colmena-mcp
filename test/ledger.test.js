@@ -112,3 +112,16 @@ test('MC-10: las mutaciones del camino normal no dejan locks ni añaden espera p
   assert.equal(fs.existsSync(lockPathOf(usagePath)), false, 'sin locks residuales');
   assert.ok(elapsed < 2000, `20 mutaciones tardaron ${elapsed} ms`);
 });
+
+test('las asignaciones por perfil se guardan con el lock, sobreviven al reinicio y se separan por mes', () => {
+  const usagePath = usagePathIn('colmena-profile-alloc-');
+  const ledger = ledgerAt(usagePath);
+  assert.equal(ledger.allocate('balanced', counts => counts.luna ? 'flash' : 'luna'), 'luna');
+  assert.equal(ledger.allocate('balanced', counts => counts.luna ? 'flash' : 'luna'), 'flash');
+  assert.deepEqual(ledger.allocationCounts('balanced'), { luna: 1, flash: 1 });
+
+  const restarted = ledgerAt(usagePath);
+  assert.deepEqual(restarted.allocationCounts('balanced'), { luna: 1, flash: 1 });
+  const nextMonth = createLedger({ usagePath }, { now: () => new Date('2026-11-01T00:00:00Z') });
+  assert.deepEqual(nextMonth.allocationCounts('balanced'), {});
+});
