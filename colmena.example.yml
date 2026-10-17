@@ -98,6 +98,12 @@ standards:
   #   Usa TDD (red, green, refactor), código limpio y DRY.
   #   Reutiliza lo existente, verifica con evidencia y reporta en RESULT/FILES/TESTS/RISKS.
 
+worktree:
+  # setup: npm ci --no-audit --no-fund  # opcional: comando ejecutado en el worktree ANTES de lanzar al agente
+  # setup_timeout_min: 10               # timeout del setup en minutos (defecto 10)
+  # Si el setup falla o expira, el job termina failed con "setup falló: …" y el agente nunca arranca.
+  # No aplica a inplace/readonly. reload_config lo recoge y su diff lo incluye.
+
 providers:
   opencode:
     isolate_config: true          # defecto: $COLMENA_HOME/opencode-config; la autenticación permanece en XDG_DATA_HOME
