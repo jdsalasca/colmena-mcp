@@ -730,3 +730,31 @@ test('MC-3: cleanup purge old terminal jobs only', async () => {
     assert.deepEqual((await call('cleanup', { older_than_days: 3, force: true })).jobsRemoved, []);
   } finally { await client.close(); }
 });
+
+test('MC-4: cleanup purga también los reports antiguos con force y older_than_days', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    const reportsDir = path.join(home, 'reports');
+    const day = 24 * 60 * 60 * 1000;
+    const seed = (name, ageDays) => {
+      const dir = path.join(reportsDir, name);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'data.json'), '{}');
+      const when = new Date(Date.now() - ageDays * day);
+      fs.utimesSync(dir, when, when);
+      return dir;
+    };
+    const oldReport = seed('20260101000000-informe-viejo', 9);
+    const oldDeck = seed('20260101000000-hito-deck', 8);
+    const recent = seed('20261016000000-reciente', 1);
+
+    assert.match((await call('cleanup', { older_than_days: 3 })).error, /force/);
+    const res = await call('cleanup', { older_than_days: 3, force: true });
+    assert.deepEqual(res.reportsRemoved.sort(), [oldDeck, oldReport].sort());
+    assert.equal(fs.existsSync(oldReport), false);
+    assert.equal(fs.existsSync(oldDeck), false);
+    assert.ok(fs.existsSync(recent), 'el reporte reciente se conserva');
+    assert.deepEqual((await call('cleanup', { older_than_days: 3, force: true })).reportsRemoved, []);
+  } finally { await client.close(); }
+});
