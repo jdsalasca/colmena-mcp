@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getConfig } from '../src/config.js';
 import { createJobManager } from '../src/jobs.js';
-import { generateReport, buildReportData, renderFallback, listStyles } from '../src/plugins/report.js';
+import { generateReport, buildReportData, renderFallback, listStyles, pruneReportDirs } from '../src/plugins/report.js';
 import { computeStats } from '../src/stats.js';
 import { baseEnv, codexOnlyHome, tmp } from './helpers.js';
 
@@ -127,4 +127,39 @@ test('built-in papercraft template fills every placeholder', async () => {
   const html = renderFallback(d, path.join(process.cwd(), 'styles', 'papercraft'));
   assert.ok(!html.includes('{{') && !html.includes('COLMENA:CARDS'));
   assert.match(html, /<article class="card"/);
+});
+
+test('MC-4: pruneReportDirs borra solo carpetas vencidas de reports/ y devuelve sus rutas', () => {
+  const config = getConfig(baseEnv(codexOnlyHome()));
+  const day = 24 * 60 * 60 * 1000;
+  const seed = (name, ageDays) => {
+    const dir = path.join(config.reportsDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'data.json'), '{}');
+    const when = new Date(Date.now() - ageDays * day);
+    fs.utimesSync(dir, when, when);
+    return dir;
+  };
+  const oldReport = seed('20260101000000-informe-viejo', 9);
+  const oldDeck = seed('20260101000000-hito-deck', 8);
+  const recent = seed('20261016000000-reciente', 1);
+
+  const removed = pruneReportDirs(config, { olderThanDays: 3 });
+  assert.deepEqual(removed.sort(), [oldDeck, oldReport].sort());
+  assert.equal(fs.existsSync(oldReport), false);
+  assert.equal(fs.existsSync(oldDeck), false);
+  assert.ok(fs.existsSync(recent), 'el reporte reciente se conserva');
+});
+
+test('MC-4: sin older_than_days no se toca nada y reports/ ausente no rompe', () => {
+  const config = getConfig(baseEnv(codexOnlyHome()));
+  const dir = path.join(config.reportsDir, '20260101000000-viejo');
+  fs.mkdirSync(dir, { recursive: true });
+  const when = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  fs.utimesSync(dir, when, when);
+  assert.deepEqual(pruneReportDirs(config), []);
+  assert.ok(fs.existsSync(dir));
+  fs.rmSync(config.reportsDir, { recursive: true, force: true });
+  assert.deepEqual(pruneReportDirs(config, { olderThanDays: 3 }), []);
+  assert.ok(!fs.existsSync(config.reportsDir));
 });
