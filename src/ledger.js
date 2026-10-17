@@ -67,9 +67,9 @@ function withLock(usagePath, options, fn) {
 
 // Usage per worker per calendar month, persisted to usage.json. Spending is local bookkeeping, not an account balance.
 // `reservations` (keyed by job id) holds the estimated cost of live jobs so concurrent submits cannot drain the same balance.
-export function createLedger(config, { now = () => new Date(), lock = {} } = {}) {
+export function createLedger(config, { now = () => new Date(), lock = {}, readFile = fs.readFileSync } = {}) {
   const ym = () => now().toISOString().slice(0, 7);
-  const read = () => { try { return JSON.parse(fs.readFileSync(config.usagePath, 'utf8')); } catch { return {}; } };
+  const read = () => { try { return JSON.parse(readFile(config.usagePath, 'utf8')); } catch { return {}; } };
   const write = all => {
     fs.mkdirSync(path.dirname(config.usagePath), { recursive: true });
     writeFileAtomic(config.usagePath, JSON.stringify(all, null, 2));
@@ -90,6 +90,18 @@ export function createLedger(config, { now = () => new Date(), lock = {} } = {})
     },
     month(worker) { return read()[ym()]?.[worker] ?? EMPTY(); },
     spent(worker) { return this.month(worker).cost_usd; },
+    // One read of usage.json for the whole month: workerStatus/chooseWorker need every worker at once,
+    // and spent()+reserved() per worker meant 2N reads per call.
+    snapshot() {
+      const all = read();
+      const spentByWorker = {};
+      for (const [worker, w] of Object.entries(all[ym()] ?? {})) spentByWorker[worker] = w.cost_usd ?? 0;
+      const sums = {};
+      for (const r of Object.values(all.reservations ?? {})) sums[r.worker] = (sums[r.worker] ?? 0) + (r.amount ?? 0);
+      const reservedByWorker = {};
+      for (const [worker, sum] of Object.entries(sums)) reservedByWorker[worker] = round(sum);
+      return { spentByWorker, reservedByWorker };
+    },
     reserve(id, worker, amount) {
       return mutate(() => {
         const all = read();

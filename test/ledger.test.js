@@ -97,6 +97,27 @@ test('MC-10: si el lock no se puede tomar, la mutación no lanza y no se roba el
   fs.unlinkSync(lockPath);
 });
 
+test('MC-9: snapshot() lee usage.json una sola vez y devuelve spent/reserved por worker', () => {
+  const usagePath = usagePathIn('colmena-snap-');
+  fs.mkdirSync(path.dirname(usagePath), { recursive: true });
+  fs.writeFileSync(usagePath, JSON.stringify({
+    '2026-10': { a: { runs: 1, input_tokens: 0, output_tokens: 0, cost_usd: 0.3 }, b: { runs: 2, input_tokens: 0, output_tokens: 0, cost_usd: 0.2 } },
+    reservations: { j1: { worker: 'a', amount: 0.1 }, j2: { worker: 'a', amount: 0.2 }, j3: { worker: 'b', amount: 0.05 } },
+  }));
+  let reads = 0;
+  const readFile = (...args) => { reads += 1; return fs.readFileSync(...args); };
+  const l = createLedger({ usagePath }, { now: AT, readFile });
+  const snap = l.snapshot();
+  assert.equal(reads, 1, 'snapshot debe leer usage.json exactamente una vez');
+  assert.deepEqual(snap, {
+    spentByWorker: { a: 0.3, b: 0.2 },
+    reservedByWorker: { a: 0.3, b: 0.05 },
+  });
+  assert.equal(l.spent('a'), 0.3);
+  assert.equal(l.reserved('a'), 0.3);
+  assert.equal(l.month('b').cost_usd, 0.2);
+});
+
 test('MC-10: las mutaciones del camino normal no dejan locks ni añaden espera perceptible', () => {
   const usagePath = usagePathIn('colmena-lock-fast-');
   const ledger = ledgerAt(usagePath);
