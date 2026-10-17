@@ -52,6 +52,7 @@ function settingsDiff(before, after) {
     profiles: changedFields(before.profiles, after.profiles),
     providers: changedFields(before.providers, after.providers),
     plugins: changedFields(before.plugins, after.plugins),
+    standards: changedFields(before.standards, after.standards),
   };
 }
 
