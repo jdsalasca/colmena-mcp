@@ -42,6 +42,85 @@ test('buildPrompt prepends configured standards only for run jobs', () => {
   assert.ok(!buildPrompt({ task: 'implementa', kind: 'run', standards: { ...standards, enabled: false } }).includes('ESTÁNDARES DE PRUEBA'));
 });
 
+test('decorated headers (bold/heading/list/backticks, lowercase, colon spacing) are recognized and cleaned', () => {
+  const cases = [
+    '**RESULT:** hecho',
+    '**RESULT**: hecho',
+    '__RESULT__: hecho',
+    '`RESULT`: hecho',
+    '## RESULT: hecho',
+    '### RESULT : hecho',
+    '- RESULT: hecho',
+    '* RESULT: hecho',
+    '*RESULT*: hecho',
+    'result: hecho',
+    '## RESULT hecho',
+    '- **RESULT:** hecho',
+  ];
+  for (const header of cases) {
+    const r = parseReport(`${header}\nFILES: a.js\nTESTS: 3/3\nRISKS: r`);
+    assert.equal(r.ok, true, `header: ${header}`);
+    assert.equal(r.sections.RESULT, 'hecho', `header: ${header}`);
+  }
+});
+
+test('emphasis wrapping section content is unwrapped', () => {
+  const r = parseReport('**RESULT:** **hecho**\n**FILES:** `a.js`\n__TESTS__: todo verde\nRISKS: **ninguno**');
+  assert.equal(r.ok, true);
+  assert.equal(r.sections.RESULT, 'hecho');
+  assert.equal(r.sections.FILES, 'a.js');
+  assert.equal(r.sections.RISKS, 'ninguno');
+});
+
+test('decorated multiline sections keep their body intact', () => {
+  const r = parseReport('- **RESULT:** hecho\n  detalle uno\n  detalle dos\n## FILES: a.js\nTESTS: t\nRISKS: r');
+  assert.equal(r.ok, true);
+  assert.equal(r.sections.RESULT, 'hecho\n  detalle uno\n  detalle dos');
+});
+
+test('false positives: phrases, mid-line mentions, code strings are not sections', () => {
+  const r = parseReport([
+    'El resultado fue: bueno',
+    'Nota: RESULT: esto no es sección',
+    'ver `RESULT:` mencionado',
+    'const code = "RESULT: falso";',
+    'resultados: no',
+  ].join('\n'));
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.sections, {});
+});
+
+test('mid-line RESULT mention inside a section does not split it', () => {
+  const r = parseReport('RESULT: explica `RESULT:` aquí\nFILES: a.js\nTESTS: t\nRISKS: r');
+  assert.equal(r.ok, true);
+  assert.equal(r.sections.RESULT, 'explica `RESULT:` aquí');
+});
+
+test('code fences around a valid report still parse', () => {
+  const r = parseReport('```\nRESULT: x\nFILES: a.js\nTESTS: t\nRISKS: r\n```');
+  assert.equal(r.ok, true);
+  assert.match(r.sections.RISKS, /^r/);
+});
+
+test('reordered sections still ok', () => {
+  const r = parseReport('FILES: a.js\nRESULT: hecho\nRISKS: r\nTESTS: t');
+  assert.equal(r.ok, true);
+  assert.equal(r.sections.RESULT, 'hecho');
+  assert.equal(r.sections.FILES, 'a.js');
+});
+
+test('missing section → not ok', () => {
+  const r = parseReport('RESULT: x\nFILES: a.js\nTESTS: t');
+  assert.equal(r.ok, false);
+});
+
+test('empty sections present are still ok', () => {
+  const r = parseReport('**RESULT:**\nFILES:\nTESTS:\nRISKS:');
+  assert.equal(r.ok, true);
+  assert.equal(r.sections.RESULT, '');
+  assert.equal(r.sections.FILES, '');
+});
+
 test('worktree run jobs get git rules naming the branch; other jobs do not', () => {
   const withBranch = buildPrompt({ task: 'x', kind: 'run', branch: 'colmena/ab12' });
   assert.match(withBranch, /colmena\/ab12/);
