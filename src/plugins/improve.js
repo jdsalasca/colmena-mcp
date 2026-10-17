@@ -62,9 +62,8 @@ export function pendingFocuses(metas, opts) {
   return launched.has('all') ? [] : PENDING_FOCUSES.filter(f => !launched.has(f));
 }
 
-const jobMetas = jm => jm.list({}).map(s => jm.meta(s.id));
-export const pendingFocusesFor = (jm, cwd, opts) => pendingFocuses(jobMetas(jm), { cwd, ...opts });
-export const hasRecentImprove = (jm, cwd, opts) => recentFocuses(jobMetas(jm), { cwd, ...opts }).size > 0;
+export const pendingFocusesFor = (jm, cwd, opts) => pendingFocuses(jm.metas(), { cwd, ...opts });
+export const hasRecentImprove = (jm, cwd, opts) => recentFocuses(jm.metas(), { cwd, ...opts }).size > 0;
 
 export function improveNext(jm, cwd, opts) {
   const pending = pendingFocusesFor(jm, cwd, opts);
