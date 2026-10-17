@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { createStore } from './store.js';
 import { EventEmitter } from 'node:events';
 import { attachRun, isProcessAlive, startRun } from './runner.js';
@@ -14,6 +15,28 @@ import { TERMINAL, VERDICTS } from './job-states.js';
 
 const RETRY_WINDOW_MS = 30_000;
 const CHECKPOINT_MS = 1000;
+
+function runSetup({ workdir, setup, timeoutMin, logPath, onSpawn }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(setup, [], { cwd: workdir, shell: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    onSpawn?.(child);
+    const logFd = fs.openSync(logPath, 'a');
+    const write = chunk => { try { fs.writeSync(logFd, chunk); } catch {} };
+    child.stdout.on('data', write);
+    child.stderr.on('data', write);
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`timeout tras ${timeoutMin} min`));
+    }, Math.max(1, timeoutMin * 60000));
+    child.once('error', error => { clearTimeout(timer); try { fs.closeSync(logFd); } catch {} reject(error); });
+    child.once('close', code => {
+      clearTimeout(timer);
+      try { fs.closeSync(logFd); } catch {}
+      if (code === 0) resolve();
+      else reject(new Error(`el comando salió con código ${code}`));
+    });
+  });
+}
 
 export function createJobManager(config, { bus = new EventEmitter(), writeArtifact = writeFileAtomic } = {}) {
   const store = createStore(config);
@@ -116,15 +139,43 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
   function start({ id, prompt, worker, timeoutMin, exitGraceS, stallMin }) {
     const meta = store.update(id, { state: 'running', startedAt: Date.now(), timeoutMin, exitGraceS, stallMin, logOffset: 0, usage: {}, retries: 0 });
     const dir = store.jobDir(id);
-    const adapter = getAdapter(worker.provider);
-    monitor(id, meta, worker, adapter, options => startRun(adapter.cmd(config), adapter.buildArgs({
-      prompt, workdir: meta.workdir, lastMessagePath: path.join(dir, 'last_message.md'),
-      readonly: meta.readonly, resumeSessionId: meta.resumeSessionId, ephemeral: meta.ephemeral, worker,
-    }), {
-      cwd: meta.workdir, logPath: path.join(dir, 'events.jsonl'), stderrPath: path.join(dir, 'stderr.log'),
-      parseLine: adapter.parseLine, env: adapter.env?.(config), ...options,
-    }));
-    fs.rmSync(path.join(dir, 'prompt.txt'), { force: true });
+    const setupCfg = meta.isolation === 'worktree' ? config.settings.worktree : null;
+    if (setupCfg?.setup) {
+      const setupState = { phase: 'setup', cancelled: false, timedOut: false, delivered: false, hasFinalMessage: false, finishedByGrace: false, usage: {}, logOffset: 0, setupError: null, handle: null };
+      live.set(id, setupState);
+      maxSeen = Math.max(maxSeen, live.size);
+      store.update(id, { phase: 'setup' });
+      let child = null;
+      setupState.handle = { kill: () => { try { child?.kill('SIGKILL'); } catch {} } };
+      runSetup({
+        workdir: meta.workdir, setup: setupCfg.setup,
+        timeoutMin: setupCfg.setup_timeout_min ?? 10,
+        logPath: path.join(dir, 'setup.log'),
+        onSpawn: c => { child = c; },
+      }).then(() => {
+        live.delete(id);
+        store.update(id, { phase: null });
+        launchAgent();
+      }).catch(error => {
+        live.delete(id);
+        setupState.setupError = `setup falló: ${error.message}`;
+        finalize(id, meta, setupState, { code: 1, signal: null, stderrTail: '' }, worker, timeoutMin);
+      });
+      return;
+    }
+    launchAgent();
+
+    function launchAgent() {
+      const adapter = getAdapter(worker.provider);
+      monitor(id, meta, worker, adapter, options => startRun(adapter.cmd(config), adapter.buildArgs({
+        prompt, workdir: meta.workdir, lastMessagePath: path.join(dir, 'last_message.md'),
+        readonly: meta.readonly, resumeSessionId: meta.resumeSessionId, ephemeral: meta.ephemeral, worker,
+      }), {
+        cwd: meta.workdir, logPath: path.join(dir, 'events.jsonl'), stderrPath: path.join(dir, 'stderr.log'),
+        parseLine: adapter.parseLine, env: adapter.env?.(config), ...options,
+      }));
+      fs.rmSync(path.join(dir, 'prompt.txt'), { force: true });
+    }
   }
 
   function monitor(id, meta, worker, adapter, openHandle, { adopted = false } = {}) {
@@ -317,6 +368,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
       ...(state.delivered ? { delivered: true, deliveredAt: state.deliveredAt } : {}),
     };
     if (state.cancelled) patch.state = 'cancelled';
+    else if (state.setupError) Object.assign(patch, { state: 'failed', error: state.setupError });
     else if (state.finishedByGrace) Object.assign(patch, { state: 'done', finishedByGrace: true, message: state.message });
     else if (state.timedOut) Object.assign(patch, { state: 'failed', error: `timeout tras ${timeoutMin} min` });
     else if (state.stalled) Object.assign(patch, { state: 'failed', error: state.stallError });
@@ -343,7 +395,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
   function status(id) {
     const m = need(id);
     const end = m.endedAt ?? Date.now();
-    return { id, state: m.state, kind: m.kind, worker: m.worker, model: m.model ?? null, provider: m.provider ?? null, effort: m.effort ?? null, elapsedS: Math.round((end - (m.startedAt ?? m.createdAt)) / 1000), task: (m.task ?? '').slice(0, 80), ...(m.branch ? { branch: m.branch } : {}), ...(m.note ? { note: m.note } : {}), ...(m.finishedByGrace ? { finishedByGrace: true } : {}), ...(m.message ? { message: m.message } : {}) };
+    return { id, state: m.state, kind: m.kind, worker: m.worker, model: m.model ?? null, provider: m.provider ?? null, effort: m.effort ?? null, elapsedS: Math.round((end - (m.startedAt ?? m.createdAt)) / 1000), task: (m.task ?? '').slice(0, 80), ...(m.branch ? { branch: m.branch } : {}), ...(m.note ? { note: m.note } : {}), ...(m.phase ? { phase: m.phase } : {}), ...(m.finishedByGrace ? { finishedByGrace: true } : {}), ...(m.message ? { message: m.message } : {}) };
   }
 
   function result(id, { detail = 'min' } = {}) {
