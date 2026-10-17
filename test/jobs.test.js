@@ -677,6 +677,21 @@ test('MC-11: el cuelgue mudo cuenta como error transitorio y se reintenta una ve
   } finally { delete process.env.FAKE_LOG; }
 });
 
+test('MC-1: OpenCode con reporte válido que queda mudo termina done sin reintentar', async () => {
+  const log = path.join(tmp('luna-report-stall-log-'), 'fake.log'); process.env.FAKE_LOG = log;
+  try {
+    const jm = stallJobs({}, { retryTransient: 1 });
+    const id = jm.submit(S('LINGER'));
+    await jm.wait([id], { timeoutS: 20 });
+
+    const result = jm.result(id);
+    assert.equal(result.state, 'done');
+    assert.equal(result.reportOk, true);
+    assert.equal(jm.meta(id).retries, 0);
+    assert.equal(fs.readFileSync(log, 'utf8').trim().split('\n').length, 1);
+  } finally { delete process.env.FAKE_LOG; }
+});
+
 test('MC-11: un job que ya entregó no se marca failed por inactividad; la gracia manda', async () => {
   const { jm } = mk({ COLMENA_STALL_TIMEOUT_MIN: '0.005', COLMENA_EXIT_GRACE_S: '2' });
   const id = jm.submit(S('LINGER'));

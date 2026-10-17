@@ -147,6 +147,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     const stallMin = Number(meta.stallMin ?? config.stallTimeoutMin ?? 0);
     const stallMs = stallMin * 60000;
     const stallEnabled = Number.isFinite(stallMs) && stallMs > 0;
+    const hasValidReport = () => meta.provider === 'opencode' && parseReport(state.lastText).ok;
     const eventsPath = path.join(dir, 'events.jsonl');
     // Liveness comes from the log's size/mtime: bytes written by the provider count even if they never become parseable events.
     const logMtime = () => { try { return fs.statSync(eventsPath).mtimeMs; } catch { return null; } };
@@ -238,6 +239,10 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
       const stamp = logStamp();
       if (stamp !== lastStamp) { lastStamp = stamp; lastActivityAt = Date.now(); return; }
       if (Date.now() - lastActivityAt < stallMs) return;
+      if (hasValidReport()) {
+        finishByGrace('OpenCode ya había entregado un reporte válido; el proceso inactivo fue finalizado y el job se marcó done.');
+        return;
+      }
       state.stalled = true;
       state.stallError = `sin actividad durante ${stallMin} min; el proveedor no respondió`;
       state.handle.kill();
@@ -249,7 +254,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
       state.handle = openHandle({
         onEvent, onOffset,
         offset: state.logOffset,
-        isDelivered: () => state.delivered || (meta.provider === 'opencode' && parseReport(state.lastText).ok),
+        isDelivered: () => state.delivered || hasValidReport(),
       });
       store.update(id, { owner: process.pid, pid: state.handle.pid, ...(adopted ? { adopted: true } : {}) });
       if (stallEnabled && !state.stallTimer) {
