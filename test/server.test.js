@@ -685,6 +685,23 @@ test('MC-4: retry MCP relanza un job fallido con su brief y rechaza los vivos', 
   } finally { await client.close(); }
 });
 
+test('MC-11: verdict MCP rechaza un job vivo con error claro y no lo registra', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  let id;
+  try {
+    const job = await call('run', { task: 'SLEEP vivo', cwd: tmp('luna-mc11-live-'), isolation: 'inplace' });
+    id = job.id;
+    const denied = await call('verdict', { job_id: job.id, verdict: 'accepted' });
+    assert.match(denied.error, /sigue/);
+    const meta = JSON.parse(fs.readFileSync(path.join(home, 'jobs', job.id, 'meta.json'), 'utf8'));
+    assert.equal(meta.verdict, undefined);
+  } finally {
+    if (id) await call('cancel', { job_id: id });
+    await client.close();
+  }
+});
+
 test('errors are returned as tool errors, not crashes', async () => {
   const { client, call } = await connect();
   try {
