@@ -11,6 +11,16 @@
 
 preferences:
   provider: auto                # codex | opencode; cámbialo en caliente si quieres priorizar otro proveedor
+  profile: balanced             # perfil activo; omítelo para conservar el ruteo por proveedor/prioridad
+
+profiles:
+  balanced:
+    mix:                        # pesos relativos: 1/4 luna-max, 1/4 ds-flash, 2/4 max-hive
+      luna-max: 1
+      ds-flash: 1
+      max-hive: 2
+  # Un perfil también puede guardar solo una preferencia de proveedor:
+  # codex-only: {provider: codex}
 
 workers:
   luna-max:
@@ -37,7 +47,7 @@ workers:
     effort: high               # este modelo no ofrece `max` (variants: minimal/low/medium/high/xhigh)
     priority: 9                # último: solo se elige a propósito (kind: bulk) o si no queda nada más
     strengths: [bulk]
-    budget: {monthly_usd: 5}   # tope de seguridad: OpenCode reporta un costo nominal por ejecución
+    free: true                 # este ejemplo asume que el plan Go cubre max-hive a $0; quítalo si no aplica
 
 # Cómo buscar otro modelo para max-hive (lo puede hacer Claude cuando lo necesites):
 #   node scripts/opencode-models.mjs --contributor           # modelos "contributor" del plan Go, del más barato al más caro
