@@ -558,6 +558,33 @@ test('preferences falls back across providers with a note, and reload_config rea
   } finally { await client.close(); }
 });
 
+test('MC-2: merge exige veredicto salvo force y devuelve verdict/verdictAt', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    const repo = tmp('luna-mc2-'); git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n'); git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'i');
+
+    const unreviewed = await call('run', { task: 'EDIT sin veredicto', cwd: repo, wait: true });
+    const denied = await call('merge', { job_id: unreviewed.id });
+    assert.match(denied.error, /verdict/);
+    assert.equal(fs.existsSync(path.join(repo, 'edited.txt')), false);
+
+    const reviewed = await call('run', { task: 'EDIT aceptado', cwd: repo, wait: true });
+    const saved = await call('verdict', { job_id: reviewed.id, verdict: 'accepted', note: 'revisado con diff' });
+    const merged = await call('merge', { job_id: reviewed.id });
+    assert.equal(merged.ok, true, JSON.stringify(merged));
+    assert.equal(merged.verdict, 'accepted');
+    assert.equal(merged.verdictAt, saved.at);
+    assert.ok(fs.existsSync(path.join(repo, 'edited.txt')));
+
+    const forced = await call('run', { task: 'EDIT forzado', cwd: repo, wait: true });
+    const forcedMerge = await call('merge', { job_id: forced.id, force: true });
+    assert.equal(forcedMerge.ok, true, JSON.stringify(forcedMerge));
+  } finally { await client.close(); }
+});
+
 test('run_many + wait, worktree flow, diff, merge, cleanup', async () => {
   const { client, call } = await connect();
   try {
@@ -572,8 +599,10 @@ test('run_many + wait, worktree flow, diff, merge, cleanup', async () => {
     assert.ok(edit && edit.branch);
     const d = await call('diff', { job_id: edit.id, max_chars: 20 });
     assert.equal(d.truncated, true); assert.ok(fs.existsSync(d.fullPath));
+    await call('verdict', { job_id: edit.id, verdict: 'accepted' });
     const m = await call('merge', { job_id: edit.id });
     assert.equal(m.ok, true, JSON.stringify(m));
+    assert.equal(m.verdict, 'accepted');
     assert.ok(fs.existsSync(path.join(repo, 'edited.txt')));
     const c = await call('cleanup', { job_id: edit.id });
     assert.equal(c.removed.length, 1);
@@ -627,6 +656,7 @@ test('cleanup accepts a squash completed through the merge tool', async () => {
     git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
     fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n'); git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'i');
     const job = await call('run', { task: 'EDIT squash', cwd: repo, wait: true });
+    await call('verdict', { job_id: job.id, verdict: 'accepted' });
     const merged = await call('merge', { job_id: job.id, strategy: 'squash' });
     assert.equal(merged.ok, true);
     const meta = JSON.parse(fs.readFileSync(path.join(home, 'jobs', job.id, 'meta.json'), 'utf8'));
