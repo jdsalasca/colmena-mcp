@@ -53,6 +53,9 @@ standards:
   enabled: true
   # preamble: |-
   #   Personaliza el preámbulo español integrado para tus jobs run.
+worktree:
+  setup: npm ci --no-audit --no-fund   # opcional: se ejecuta en el worktree ANTES de lanzar al agente (p. ej. instalar dependencias)
+  setup_timeout_min: 10                # timeout del setup en minutos (defecto 10)
 providers:
   opencode:
     isolate_config: true
@@ -78,6 +81,7 @@ Notas:
 - `meta.json`, `status` y `result` conservan `model`, `provider` y `effort` del worker seleccionados al crear cada job, aunque la configuración se recargue después.
 - `effort` se pasa como `model_reasoning_effort` (Codex) o `--variant` (OpenCode).
 - `providers.opencode.isolate_config` está activo por defecto: OpenCode usa `$COLMENA_HOME/opencode-config` como `XDG_CONFIG_HOME`. Así no hereda los servidores MCP, plugins, agentes, `AGENTS.md` ni skills de la configuración global del usuario; los estándares de Colmena llegan por el preámbulo. La autenticación se conserva en `XDG_DATA_HOME`. Define `config_dir` para usar una configuración mínima propia (la carpeta se crea si falta), o `isolate_config: false` para volver a usar la configuración habitual.
+- `worktree.setup` (opcional) ejecuta un comando en el worktree recién creado **antes** de lanzar al agente — por ejemplo `npm ci --no-audit --no-fund` para instalar dependencias. El job se ve `running` con `phase: 'setup'` durante la ejecución; la salida se guarda en `setup.log` del job. Si el comando falla o excede `setup_timeout_min` (defecto 10), el job termina `failed` con `setup falló: …` y el agente nunca arranca. No aplica a `inplace` ni `readonly`. `reload_config` lo recoge y su diff lo incluye.
 - Evidencia de la comparación reportada para una ejecución trivial: el contexto de entrada bajó de ~47k a ~8k tokens; `opencode-go/deepseek-v4.1-flash` bajó de $0.0074 a $0.0011 por ejecución; y `opencode-go/cat-jam-free`, que fallaba globalmente con `maximum number of items is 128`, respondió con costo reportado `0`. La configuración global también hizo que un job usara `chatgpt-coordinator` durante más de 10 minutos y se observó `ProviderHeaderTimeoutError` en `step-5-preview`.
 - OpenCode informa el costo en USD de cada ejecución. **Codex no**: para contabilizarlo añade `price_per_mtok: {input: …, output: …}` al worker.
 - El saldo real de tus cuentas no se puede consultar por API: el presupuesto es **declarativo + conteo local** (`usage.json`, que además guarda las reservas de los jobs vivos). Dos servidores sobre el mismo `COLMENA_HOME` no pierden actualizaciones: `record`, `reserve`, `release` y `reconcile` se serializan con un lock advisory (`usage.json.lock`) que se recupera solo si es viejo (> 10 s) o su dueño murió. Si el lock no se obtiene en 2 s la mutación se aplica igual (fail-soft): la contabilidad nunca bloquea ni rompe un job.

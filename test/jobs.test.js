@@ -23,6 +23,16 @@ const mk = (env = {}) => {
   return { jm: createJobManager(config), config };
 };
 const S = (task, extra = {}) => ({ task, cwd: tmp('luna-cwd-'), isolation: 'inplace', ...extra });
+const setupHome = (setup, { timeoutMin = 10, extraYaml = '' } = {}) => codexOnlyHome(`
+worktree:
+  setup: |-
+    ${setup}
+  setup_timeout_min: ${timeoutMin}
+${extraYaml}`);
+const mkSetup = (setup, options = {}, env = {}) => {
+  const config = getConfig(baseEnv(setupHome(setup, options), env));
+  return { jm: createJobManager(config), config };
+};
 function seedRunning(config, { id = 'recovered', delivered = false, stderr = '', owner = Number.MAX_SAFE_INTEGER, pid = Number.MAX_SAFE_INTEGER } = {}) {
   const dir = path.join(config.jobsDir, id);
   fs.mkdirSync(dir, { recursive: true });
@@ -938,4 +948,74 @@ test('MC-4: brief.md se publica con writeArtifact y sobrevive al arranque del jo
   const brief = fs.readFileSync(path.join(jm.jobDir(id), 'brief.md'), 'utf8');
   assert.ok(brief.includes('z'.repeat(350)));
   assert.equal(fs.existsSync(path.join(jm.jobDir(id), 'prompt.txt')), false);
+});
+
+test('worktree.setup: el agente arranca solo tras un setup exitoso', async () => {
+  const { jm } = mkSetup(`node -e "require('fs').writeFileSync('setup-marker.txt', 'ok')"`);
+  const r0 = repo();
+  const id = jm.submit({ task: 'EDIT', cwd: r0, isolation: 'worktree' });
+  await jm.wait([id]);
+  const r = jm.result(id);
+  assert.equal(r.state, 'done');
+  assert.ok(fs.existsSync(path.join(r.workdir, 'setup-marker.txt')), 'el setup debió escribir el marcador');
+  assert.ok(r.files.includes('edited.txt'), 'el agente debió arrancar tras el setup');
+  assert.ok(fs.existsSync(path.join(jm.jobDir(id), 'setup.log')), 'la salida del setup va a setup.log');
+  assert.ok(!jm.meta(id).phase, 'la phase setup se limpia al arrancar el agente');
+});
+
+test('worktree.setup: si el setup falla, el job termina failed y el agente nunca arranca', async () => {
+  const { jm } = mkSetup(`node -e "process.exit(1)"`);
+  const r0 = repo();
+  const id = jm.submit({ task: 'EDIT', cwd: r0, isolation: 'worktree' });
+  await jm.wait([id]);
+  const r = jm.result(id);
+  assert.equal(r.state, 'failed');
+  assert.match(r.error, /setup falló/);
+  assert.equal(fs.existsSync(path.join(r.workdir, 'setup-marker.txt')), false);
+  assert.equal(r.files, undefined, 'el agente no debió arrancar');
+});
+
+test('worktree.setup: si el setup excede el timeout, el job falla y el agente nunca arranca', async () => {
+  const { jm } = mkSetup(`node -e "setTimeout(() => {}, 5000)"`, { timeoutMin: 0.005 });
+  const r0 = repo();
+  const id = jm.submit({ task: 'EDIT', cwd: r0, isolation: 'worktree' });
+  await jm.wait([id], { timeoutS: 30 });
+  const r = jm.result(id);
+  assert.equal(r.state, 'failed');
+  assert.match(r.error, /setup falló/);
+  assert.match(r.error, /timeout/i);
+  assert.equal(r.files, undefined, 'el agente no debió arrancar');
+});
+
+test('worktree.setup: durante el setup el job se ve running con phase setup', async () => {
+  const { jm } = mkSetup(`node -e "setTimeout(() => {}, 800)"`);
+  const r0 = repo();
+  const id = jm.submit({ task: 'EDIT', cwd: r0, isolation: 'worktree' });
+  await until(() => jm.status(id).phase === 'setup', 'el job debe verse en phase setup');
+  assert.equal(jm.status(id).state, 'running');
+  await jm.wait([id]);
+  assert.equal(jm.result(id).state, 'done');
+});
+
+test('worktree.setup: no aplica a inplace ni readonly', async () => {
+  const { jm } = mkSetup(`node -e "require('fs').writeFileSync('setup-marker.txt', 'ok')"`);
+  const inplace = jm.submit(S('hola'));
+  await jm.wait([inplace]);
+  assert.equal(jm.result(inplace).state, 'done');
+  assert.equal(fs.existsSync(path.join(jm.jobDir(inplace), 'setup.log')), false, 'inplace no corre setup');
+
+  const r0 = repo();
+  const readonly = jm.submit({ task: 'hola', cwd: r0, isolation: 'readonly' });
+  await jm.wait([readonly]);
+  assert.equal(jm.result(readonly).state, 'done');
+  assert.equal(fs.existsSync(path.join(jm.jobDir(readonly), 'setup.log')), false, 'readonly no corre setup');
+});
+
+test('worktree.setup: sin setup configurado el job worktree corre como siempre', async () => {
+  const { jm } = mk();
+  const r0 = repo();
+  const id = jm.submit({ task: 'EDIT', cwd: r0, isolation: 'worktree' });
+  await jm.wait([id]);
+  assert.equal(jm.result(id).state, 'done');
+  assert.equal(fs.existsSync(path.join(jm.jobDir(id), 'setup.log')), false);
 });
