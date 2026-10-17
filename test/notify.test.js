@@ -145,6 +145,31 @@ test('"on" filter: only fail → no start/finish toasts', async () => {
   assert.equal(sent.length, 0);
   plugin.stop();
 });
+test('MC-3: cancel en cola deja línea [finish] con cancelado en activity.log', async () => {
+  const config = getConfig(baseEnv(codexOnlyHome(), { LUNA_MAX_PARALLEL: '1' }));
+  const jm = createJobManager(config);
+  const sent = [];
+  const notifier = { send: n => sent.push(n) };
+  const plugin = notifyPlugin({ bus: jm.bus, jm, cfg: { enabled: true, on: ['start', 'finish', 'fail'], heartbeat_min: 10 }, notifier, heartbeatMs: 100000, debounceMs: 40, logPath: config.activityPath });
+  const a = jm.submit(S('SLEEP'));
+  const b = jm.submit(S('hola'));
+  try {
+    await sleep(250);
+    assert.equal(jm.status(b).state, 'queued');
+    await jm.cancel(b);
+    await sleep(150);
+    const log = fs.readFileSync(config.activityPath, 'utf8');
+    assert.match(log, /\[finish\]/);
+    assert.match(log, /cancelado/);
+    const finishToast = sent.find(n => n.kind === 'finish');
+    assert.ok(finishToast);
+    assert.match(finishToast.body, /cancelado/);
+  } finally {
+    await jm.cancel(a);
+    await jm.wait([a], { timeoutS: 20 });
+    plugin.stop();
+  }
+});
 test('activity.log gets lines even when toasts are off', async () => {
   const { config, jm, plugin } = setup({ heartbeatMs: 100000 });
   const ok = jm.submit(S('hola')); await jm.wait([ok]); await sleep(150);

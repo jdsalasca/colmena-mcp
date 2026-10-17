@@ -101,6 +101,39 @@ test('cancel queued → cancelled without running', async () => {
   assert.equal(jm.status(b).state, 'cancelled');
   await jm.cancel(a); await jm.wait([a], { timeoutS: 20 });
 });
+test('MC-3: cancel queued → job.finished con state cancelled y payload de finalize', async () => {
+  const { jm } = mk({ LUNA_MAX_PARALLEL: '1' });
+  const finished = [];
+  jm.bus.on('job.finished', e => finished.push(e));
+  const a = jm.submit(S('SLEEP')); const b = jm.submit(S('hola'));
+  try {
+    assert.equal(jm.status(b).state, 'queued');
+    await jm.cancel(b);
+    assert.equal(finished.length, 1);
+    const [e] = finished;
+    assert.equal(e.id, b);
+    assert.equal(e.state, 'cancelled');
+    assert.equal(e.worker, 'luna-max');
+    assert.equal(e.provider, 'codex');
+    assert.equal(e.kind, 'run');
+    assert.equal(e.task, 'hola');
+    assert.equal(typeof e.endedAt, 'number');
+  } finally {
+    await jm.cancel(a); await jm.wait([a], { timeoutS: 20 });
+  }
+});
+test('MC-3: cancel running → exactamente 1 job.finished (el de finalize)', async () => {
+  const { jm } = mk();
+  const finished = [];
+  jm.bus.on('job.finished', e => finished.push(e));
+  const id = jm.submit(S('SLEEP'));
+  await new Promise(r => setTimeout(r, 600));
+  assert.equal(jm.status(id).state, 'running');
+  await jm.cancel(id);
+  await jm.wait([id], { timeoutS: 20 });
+  assert.equal(finished.length, 1);
+  assert.equal(finished[0].state, 'cancelled');
+});
 test('timeout → failed with reason', async () => {
   const { jm } = mk({ LUNA_JOB_TIMEOUT_MIN: '0.02' });
   const id = jm.submit(S('SLEEP'));
