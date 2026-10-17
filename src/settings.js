@@ -26,6 +26,12 @@ const Worker = z.object({
 });
 
 const Roles = z.object({ reporter: z.string(), summarizer: z.string(), reviewer: z.string(), presenter: z.string() });
+export const MixWeights = z.record(z.string(), z.number().int().positive()).refine(mix => Object.keys(mix).length > 0, 'debe incluir al menos un worker');
+export const ProfileProvider = z.enum(['auto', 'codex', 'opencode']);
+const Profile = z.union([
+  z.object({ mix: MixWeights }).strict(),
+  z.object({ provider: ProfileProvider }).strict(),
+]);
 const Defaults = z.object({
   worker: z.string(), max_parallel: z.number().int().positive().default(4), timeout_min: z.number().positive().default(60),
   exit_grace_s: z.number().positive().default(20), retry_transient: z.number().int().nonnegative().default(1), wait_max_s: z.number().int().positive().max(1800).default(600),
@@ -33,7 +39,7 @@ const Defaults = z.object({
   cancel_jobs_on_shutdown: z.boolean().default(false),
   reserve_usd: z.number().nonnegative().default(0),
 });
-const Preferences = z.object({ provider: z.enum(['auto', 'codex', 'opencode']).default('auto') });
+const Preferences = z.object({ provider: z.enum(['auto', 'codex', 'opencode']).default('auto'), profile: z.string().min(1).optional() });
 const Notify = z.object({
   enabled: z.boolean().default(true),
   on: z.array(z.enum(['start', 'finish', 'fail'])).default(['start', 'finish', 'fail']),
@@ -60,6 +66,7 @@ export const DEFAULT_SETTINGS = {
   roles: { reporter: 'ds-flash', summarizer: 'ds-flash', reviewer: 'luna-max', presenter: 'luna-max' },
   defaults: { worker: 'luna-max', max_parallel: 4, timeout_min: 60, exit_grace_s: 20, retry_transient: 1, wait_max_s: 600, stall_timeout_min: 15, cancel_jobs_on_shutdown: false, reserve_usd: 0 },
   preferences: { provider: 'auto' },
+  profiles: {},
   plugins: { notify: {}, report: {}, present: {}, improve: {}, widget: {} },
   standards: { enabled: true, preamble: DEFAULT_STANDARDS_PREAMBLE },
   providers: { opencode: { isolate_config: true } },
@@ -87,6 +94,7 @@ export function loadSettings(home, env = process.env) {
       : typeof user.preferences === 'object' && !Array.isArray(user.preferences)
         ? { ...DEFAULT_SETTINGS.preferences, ...user.preferences }
         : user.preferences,
+    profiles: user.profiles ?? DEFAULT_SETTINGS.profiles,
     plugins: {
       notify: { ...DEFAULT_SETTINGS.plugins.notify, ...(user.plugins?.notify ?? {}) },
       report: { ...DEFAULT_SETTINGS.plugins.report, ...(user.plugins?.report ?? {}) },
@@ -112,16 +120,32 @@ export function loadSettings(home, env = process.env) {
   };
   const schema = z.object({
     workers: z.record(z.string(), Worker).refine(w => Object.keys(w).length > 0, 'debe haber al menos un worker'),
-    roles: Roles, defaults: Defaults, preferences: Preferences,
+    roles: Roles, defaults: Defaults, preferences: Preferences, profiles: z.record(z.string().min(1), Profile),
     plugins: z.object({ notify: Notify, report: Report, present: Present, improve: Improve, widget: Widget }),
     standards: Standards,
     providers: Providers,
+  }).superRefine((settings, ctx) => {
+    const names = Object.keys(settings.workers);
+    for (const [profileName, profile] of Object.entries(settings.profiles)) {
+      if (!profile.mix) continue;
+      for (const alias of Object.keys(profile.mix)) {
+        if (!Object.hasOwn(settings.workers, alias)) ctx.addIssue({
+          code: 'custom', path: ['profiles', profileName, 'mix', alias],
+          message: `worker '${alias}' no existe (workers: ${names.join(', ')})`,
+        });
+      }
+    }
+    const activeProfile = settings.preferences.profile;
+    if (activeProfile && !Object.hasOwn(settings.profiles, activeProfile)) ctx.addIssue({
+      code: 'custom', path: ['preferences', 'profile'],
+      message: `perfil '${activeProfile}' no existe (profiles: ${Object.keys(settings.profiles).join(', ') || 'ninguno'})`,
+    });
   });
   const r = schema.safeParse(merged);
   if (!r.success) throw new Error(`colmena.yml inválido (${file}): ${fmt(r.error)}`);
   const s = r.data;
   const names = Object.keys(s.workers);
-  const check = (field, alias) => { if (!s.workers[alias]) throw new Error(`colmena.yml inválido (${file}): ${field}: worker '${alias}' no existe (workers: ${names.join(', ')})`); };
+  const check = (field, alias) => { if (!Object.hasOwn(s.workers, alias)) throw new Error(`colmena.yml inválido (${file}): ${field}: worker '${alias}' no existe (workers: ${names.join(', ')})`); };
   check('defaults.worker', s.defaults.worker);
   for (const [k, v] of Object.entries(s.roles)) check(`roles.${k}`, v);
   return s;

@@ -77,7 +77,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
   function submit(spec) {
     const handoffTexts = (spec.handoff ?? []).map(summaryText);
     if (spec.worker) resolveWorker(spec.worker); // unknown/disabled → clear error before touching anything
-    const selection = chooseWorker(config.settings, ledger, { worker: spec.worker, kind: spec.taskKind });
+    const selection = chooseWorker(config.settings, ledger, { worker: spec.worker, kind: spec.taskKind, commitAllocation: true });
     const worker = resolveWorker(selection.alias);
     const cwd = spec.cwd ?? process.cwd();
     const id = store.newId();
@@ -557,6 +557,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
 
   return {
     bus, resolveWorker, routeWorker: spec => chooseWorker(config.settings, ledger, spec), workers: () => workerStatus(config.settings, ledger),
+    allocationCounts: profile => ledger.allocationCounts(profile),
     submit, status, result, wait, cancel, continueJob, retry, summarize, compact, review, verdict, recoverOrphans, pruneTerminalJobs, shutdown,
     list: f => store.list(f ?? {}).map(m => status(m.id)),
     metas: () => store.list({}),

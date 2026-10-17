@@ -15,6 +15,7 @@ import { buildImprovePrompt, hasRecentImprove, PENDING_FOCUSES, CONTINUOUS_IMPRO
 import { createWidgetController } from './plugins/widget.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { TERMINAL } from './job-states.js';
+import { MixWeights, ProfileProvider } from './settings.js';
 
 const { version: packageVersion } = createRequire(import.meta.url)('../package.json');
 
@@ -47,12 +48,13 @@ function settingsDiff(before, after) {
     roles: changedFields(before.roles, after.roles),
     defaults: changedFields(before.defaults, after.defaults),
     preferences: changedFields(before.preferences, after.preferences),
+    profiles: changedFields(before.profiles, after.profiles),
     providers: changedFields(before.providers, after.providers),
     plugins: changedFields(before.plugins, after.plugins),
   };
 }
 
-function persistPreference(config, provider, atomicWriteDependencies) {
+function editConfig(config, edit, atomicWriteDependencies) {
   const file = config.settingsPath ?? path.join(config.home, 'colmena.yml');
   const exists = fs.existsSync(file);
   const document = exists
@@ -60,16 +62,21 @@ function persistPreference(config, provider, atomicWriteDependencies) {
     : new YAML.Document({});
   if (document.errors.length) throw new Error(`no se pudo actualizar preferences en ${file}: ${document.errors[0].message}`);
   if (document.contents == null) document.contents = document.createNode({});
-  document.setIn(['preferences', 'provider'], provider);
+  edit(document);
 
   fs.mkdirSync(path.dirname(file), { recursive: true });
   writeFileAtomic(file, document.toString(), atomicWriteDependencies);
 }
 
+const saveProfileShape = z.union([
+  z.object({ name: z.string().min(1), mix: MixWeights }).strict(),
+  z.object({ name: z.string().min(1), provider: ProfileProvider }).strict(),
+]);
+
 const taskShape = {
   task: z.string().min(1).describe('Brief claro y autocontenido: objetivo, archivos, criterio de aceptación. El agente no ve esta conversación.'),
   cwd: z.string().optional().describe('Directorio del proyecto (defecto: cwd del servidor)'),
-  worker: z.string().optional().describe('Alias de worker de colmena.yml (ver tool workers). Si se omite, respeta preferences.provider y aplica kind, defaults.worker compatible y prioridad'),
+  worker: z.string().optional().describe('Alias de worker de colmena.yml (ver tool workers). Si se omite, respeta preferences.profile (o preferences.provider) y aplica kind, defaults.worker compatible y prioridad'),
   kind: z.string().optional().describe('Tipo de tarea (code, docs, refactor, tests...) para que el router prefiera workers con esa fortaleza'),
   isolation: isolationEnum,
   context_files: z.array(z.string()).optional().describe('Rutas que el agente debe leer primero'),
@@ -93,8 +100,29 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
     return { task: a.task, worker: a.worker, taskKind: a.kind, cwd, isolation: a.isolation ?? (iso.isGitRepo(cwd) ? 'worktree' : 'inplace'), contextFiles: a.context_files, handoff: a.handoff_from };
   };
   const terminalMeta = id => { const m = jm.meta(id); if (!TERMINAL.has(m.state)) throw new Error(`job ${id} sigue ${m.state}`); return m; };
+  const countsForProfile = name => {
+    const mix = config.settings.profiles[name]?.mix;
+    if (!mix) return {};
+    const counts = jm.allocationCounts(name);
+    return Object.fromEntries(Object.keys(mix).map(alias => [alias, counts[alias] ?? 0]));
+  };
+  const profilesForTool = () => Object.fromEntries(Object.entries(config.settings.profiles).map(([name, profile]) => [
+    name, profile.mix ? { mix: profile.mix, assignments: countsForProfile(name) } : { provider: profile.provider },
+  ]));
+  const preferenceResult = (selection, note) => {
+    const active = config.settings.preferences.profile ?? null;
+    return {
+      provider: config.settings.preferences.provider,
+      profile: active,
+      profiles: profilesForTool(),
+      assignments: active ? countsForProfile(active) : {},
+      worker: selection?.alias ?? null,
+      would_choose: selection?.alias ?? null,
+      ...(selection?.note || note ? { note: [selection?.note, note].filter(Boolean).join('; ') } : {}),
+    };
+  };
 
-  tool('workers', 'Lista los workers de colmena.yml con prioridad, fortalezas, preferencia, gasto del mes, reservas de jobs vivos, presupuesto restante y disponibilidad. Úsalo para decidir a quién delegar.', {}, () => jm.workers());
+  tool('workers', 'Lista los workers de colmena.yml con prioridad, fortalezas, preferencia, participación del perfil activo, gasto del mes, reservas de jobs vivos, presupuesto restante y disponibilidad. Úsalo para decidir a quién delegar.', {}, () => jm.workers());
 
   const widget = createWidgetController({ home: config.home, ...widgetDependencies });
   const widgetTool = tool('widget', 'Agrega el widget animado al escritorio, consulta su estado o ciérralo. El ejecutable y COLMENA_HOME se resuelven desde la configuración del servidor.',
@@ -102,30 +130,48 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
     ({ action }) => widget[action]());
   if (!config.settings.plugins.widget.enabled) widgetTool.disable();
 
-  tool('preferences', 'Consulta o cambia en caliente el proveedor preferido por el router y guarda el cambio en el archivo de configuración.',
-    { provider: z.enum(['auto', 'codex', 'opencode']).optional().describe('auto conserva el ruteo actual; codex u opencode priorizan ese proveedor') },
-    ({ provider }) => {
-      const changed = provider !== undefined;
-      if (changed) {
-        persistPreference(config, provider, atomicWriteDependencies);
-        config.settings = { ...config.settings, preferences: { provider } };
+  tool('preferences', 'Consulta o cambia en caliente el proveedor o perfil activo, y crea o actualiza perfiles guardándolos en colmena.yml.',
+    {
+      provider: ProfileProvider.optional().describe('auto conserva el ruteo actual; codex u opencode priorizan ese proveedor'),
+      profile: z.string().min(1).optional().describe('Nombre de un perfil existente que quedará activo para los siguientes run'),
+      save_profile: saveProfileShape.optional().describe('Crea o actualiza un perfil con una mezcla ponderada o un proveedor preferido'),
+    },
+    ({ provider, profile, save_profile }) => {
+      const nextProfiles = { ...config.settings.profiles };
+      const savedDefinition = save_profile && (save_profile.mix ? { mix: save_profile.mix } : { provider: save_profile.provider });
+      if (save_profile?.mix) {
+        const missing = Object.keys(save_profile.mix).find(alias => !Object.hasOwn(config.settings.workers, alias));
+        if (missing) throw new Error(`profiles.${save_profile.name}.mix: worker '${missing}' no existe (workers: ${Object.keys(config.settings.workers).join(', ')})`);
+      }
+      if (save_profile) nextProfiles[save_profile.name] = savedDefinition;
+      if (profile !== undefined && !Object.hasOwn(nextProfiles, profile)) throw new Error(`preferences.profile: perfil '${profile}' no existe (profiles: ${Object.keys(nextProfiles).join(', ') || 'ninguno'})`);
+
+      const changedPreferences = provider !== undefined || profile !== undefined;
+      if (save_profile || changedPreferences) {
+        editConfig(config, document => {
+          if (save_profile) document.setIn(['profiles', save_profile.name], savedDefinition);
+          if (provider !== undefined) document.setIn(['preferences', 'provider'], provider);
+          if (profile !== undefined) document.setIn(['preferences', 'profile'], profile);
+        }, atomicWriteDependencies);
+        config.settings = {
+          ...config.settings,
+          profiles: nextProfiles,
+          preferences: {
+            ...config.settings.preferences,
+            ...(provider !== undefined ? { provider } : {}),
+            ...(profile !== undefined ? { profile } : {}),
+          },
+        };
       }
       let selection;
       try { selection = jm.routeWorker(); } catch (error) {
         const message = error?.message ?? String(error);
         return {
-          provider: config.settings.preferences.provider,
-          worker: null,
-          would_choose: null,
-          note: `${changed ? 'preferencia guardada; ' : ''}el router no pudo calcular qué worker elegir: ${message}`,
+          ...preferenceResult(null, `${changedPreferences ? 'preferencia guardada; ' : ''}el router no pudo calcular qué worker elegir: ${message}`),
+          ...(save_profile ? { saved_profile: save_profile.name } : {}),
         };
       }
-      return {
-        provider: config.settings.preferences.provider,
-        worker: selection.alias,
-        would_choose: selection.alias,
-        ...(selection.note ? { note: selection.note } : {}),
-      };
+      return { ...preferenceResult(selection), ...(save_profile ? { saved_profile: save_profile.name } : {}) };
     });
 
   const reportTool = tool('report', 'Genera un reporte HTML bonito de lo logrado por los jobs indicados (ronda final). El worker del rol reporter lo redacta con el estilo elegido (defecto papercraft); si falla, se usa un renderizador de respaldo. Devuelve la ruta del HTML.',
@@ -176,7 +222,7 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
     return settingsDiff(previous, next);
   });
 
-  tool('run', 'Lanza un agente obrero (según proveedor preferido, disponibilidad, kind y prioridad; worker explícito siempre manda). Devuelve job_id; con wait=true espera el reporte (hasta timeout_s).',
+  tool('run', 'Lanza un agente obrero (según perfil o proveedor preferido, disponibilidad, kind y prioridad; worker explícito siempre manda). Devuelve job_id; con wait=true espera el reporte (hasta timeout_s).',
     { ...taskShape, wait: z.boolean().optional(), timeout_s: timeoutSShape },
     async a => {
       const id = jm.submit(toSpec(a));

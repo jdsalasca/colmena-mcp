@@ -89,6 +89,40 @@ test('invalid preferences.provider identifies the field', () => {
   const { h, env } = withYml('preferences: {provider: nope}\n');
   assert.throws(() => loadSettings(h, env), /preferences\.provider/);
 });
+test('profiles admit weighted mixes and provider presets with an optional active profile', () => {
+  const { h, env } = withYml(`
+workers:
+  luna: {provider: codex, model: m1}
+  flash: {provider: opencode, model: m2}
+profiles:
+  balanced: {mix: {luna: 1, flash: 2}}
+  codex-only: {provider: codex}
+roles: {reporter: luna, summarizer: luna, reviewer: luna, presenter: luna}
+defaults: {worker: luna}
+preferences: {profile: balanced}
+`);
+  const settings = loadSettings(h, env);
+  assert.deepEqual(settings.profiles, {
+    balanced: { mix: { luna: 1, flash: 2 } },
+    'codex-only': { provider: 'codex' },
+  });
+  assert.deepEqual(settings.preferences, { provider: 'auto', profile: 'balanced' });
+});
+test('profiles reject unknown worker aliases, invalid weights, mixed shapes and unknown active names', () => {
+  for (const yml of [
+    'profiles: {bad: {mix: {ghost: 1}}}\n',
+    'profiles: {bad: {mix: {luna-max: 0}}}\n',
+    'profiles: {bad: {mix: {luna-max: 1.5}}}\n',
+    'profiles: {bad: {mix: {}}}\n',
+    'profiles: {bad: {mix: {luna-max: 1}, provider: codex}}\n',
+    'preferences: {profile: missing}\n',
+  ]) {
+    const { h, env } = withYml(yml);
+    assert.throws(() => loadSettings(h, env), /colmena\.yml inválido/);
+  }
+  const unknownAlias = withYml('profiles: {bad: {mix: {ghost: 1}}}\n');
+  assert.throws(() => loadSettings(unknownAlias.h, unknownAlias.env), /profiles\.bad\.mix.*ghost.*no existe/);
+});
 test('exit_grace_s has a default and must be positive', () => {
   const { h, env } = withYml('defaults: {worker: luna-max, exit_grace_s: 0}\n');
   assert.throws(() => loadSettings(h, env), /defaults\.exit_grace_s/);

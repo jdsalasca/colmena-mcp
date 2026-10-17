@@ -12,7 +12,7 @@ import { getConfig } from '../src/config.js';
 import * as iso from '../src/isolation.js';
 import { buildServer } from '../src/tools.js';
 
-import { baseEnv, codexOnlyHome } from './helpers.js';
+import { baseEnv, codexOnlyHome, fakeOpencode } from './helpers.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
@@ -359,12 +359,12 @@ test('reload_config updates workers, reports a compact diff, and preserves setti
       .replace('roles: {reporter: luna-max, summarizer: luna-max, reviewer: luna-max}', 'roles: {reporter: luna-max, summarizer: luna-max, reviewer: new}')
       .replace('defaults: {worker: luna-max}', 'defaults: {worker: new, max_parallel: 8, exit_grace_s: 25}')
       .replace('plugins:\n  notify: {enabled: false}', 'plugins:\n  notify: {enabled: false}\n  improve: {hints: false}\n  report: {enabled: false}')
-      + '\nproviders: {opencode: {isolate_config: false}}\n');
+      + '\nproviders: {opencode: {isolate_config: false}}\nprofiles: {balanced: {mix: {new: 2}}}\n');
     const diff = await call('reload_config', {});
     assert.deepEqual(diff, {
       added: ['new'], removed: ['alt'], changed: [{ alias: 'luna-max', fields: ['budget.monthly_usd', 'free', 'model'] }],
       roles: ['presenter', 'reviewer'], defaults: ['exit_grace_s', 'max_parallel', 'worker'], providers: ['opencode.isolate_config'],
-      plugins: ['improve.hints', 'report.enabled'], preferences: [],
+      plugins: ['improve.hints', 'report.enabled'], preferences: [], profiles: ['balanced.mix.new'],
     });
     assert.equal((await client.listTools()).tools.some(tool => tool.name === 'report'), false);
     const run = await call('run', { task: 'modelo renovado', worker: 'luna-max', cwd: tmp('luna-reload-c-'), wait: true });
@@ -394,9 +394,13 @@ test('preferences gets current routing, changes the next run, persists comments,
     COLMENA_OPENCODE_BIN: path.join(here, 'fake-opencode.js'), FAKE_LOG: log,
   });
   try {
-    assert.deepEqual(await call('preferences', {}), { provider: 'auto', worker: 'luna', would_choose: 'luna' });
+    assert.deepEqual(await call('preferences', {}), {
+      provider: 'auto', profile: null, profiles: {}, assignments: {}, worker: 'luna', would_choose: 'luna',
+    });
     const selected = await call('preferences', { provider: 'opencode' });
-    assert.deepEqual(selected, { provider: 'opencode', worker: 'flash', would_choose: 'flash' });
+    assert.deepEqual(selected, {
+      provider: 'opencode', profile: null, profiles: {}, assignments: {}, worker: 'flash', would_choose: 'flash',
+    });
     const rows = await call('workers', {});
     assert.equal(rows.find(row => row.alias === 'flash').preferred, true);
     assert.equal(rows.find(row => row.alias === 'luna').preferred, false);
@@ -425,12 +429,47 @@ test('preferences gets current routing, changes the next run, persists comments,
   } finally { await client.close(); }
 });
 
+test('preferences guarda perfiles mix, los activa para el siguiente run y reporta reparto y conteos', async () => {
+  const { home, file } = providerHome();
+  const { client, call } = await connect({ COLMENA_HOME: home, COLMENA_CONFIG: file, COLMENA_OPENCODE_BIN: fakeOpencode });
+  try {
+    const saved = await call('preferences', { save_profile: { name: 'flash-only', mix: { flash: 1 } } });
+    assert.equal(saved.saved_profile, 'flash-only');
+    const afterSave = fs.readFileSync(file, 'utf8');
+    assert.match(afterSave, /# comentario que debe conservarse/);
+    assert.match(afterSave, /# preferencia del usuario/);
+    assert.match(afterSave, /flash-only/);
+
+    const active = await call('preferences', { profile: 'flash-only' });
+    assert.equal(active.profile, 'flash-only');
+    assert.equal(active.worker, 'flash');
+    assert.deepEqual(active.assignments, { flash: 0 });
+    assert.equal((await call('workers', {})).find(row => row.alias === 'flash').profile_share, 1);
+    assert.match(fs.readFileSync(file, 'utf8'), /# comentario que debe conservarse/);
+    assert.match(fs.readFileSync(file, 'utf8'), /# preferencia del usuario/);
+
+    const run = await call('run', { task: 'usar el perfil activo', cwd: tmp('colmena-profile-run-'), wait: true });
+    assert.equal(run.worker, 'flash');
+    const summary = await call('preferences', {});
+    assert.equal(summary.profile, 'flash-only');
+    assert.deepEqual(summary.assignments, { flash: 1 });
+    assert.deepEqual(summary.profiles['flash-only'], { mix: { flash: 1 }, assignments: { flash: 1 } });
+
+    const beforeInvalid = fs.readFileSync(file, 'utf8');
+    const invalid = await call('preferences', { save_profile: { name: 'bad', mix: { ghost: 1 } } });
+    assert.match(invalid.error, /ghost.*no existe/);
+    assert.equal(fs.readFileSync(file, 'utf8'), beforeInvalid);
+  } finally { await client.close(); }
+});
+
 test('preferences creates the effective config file when absent', async () => {
   const home = tmp('colmena-pref-missing-');
   const file = path.join(home, 'nested', 'colmena.yml');
   const { client, call } = await connect({ COLMENA_HOME: home, COLMENA_CONFIG: file });
   try {
-    assert.deepEqual(await call('preferences', { provider: 'opencode' }), { provider: 'opencode', worker: 'ds-flash', would_choose: 'ds-flash' });
+    assert.deepEqual(await call('preferences', { provider: 'opencode' }), {
+      provider: 'opencode', profile: null, profiles: {}, assignments: {}, worker: 'ds-flash', would_choose: 'ds-flash',
+    });
     assert.match(fs.readFileSync(file, 'utf8'), /preferences:\s+provider: opencode/);
     assert.deepEqual(fs.readdirSync(path.dirname(file)).filter(name => name.includes('.tmp')), []);
   } finally { await client.close(); }
@@ -546,6 +585,7 @@ test('preferences falls back across providers with a note, and reload_config rea
   try {
     assert.deepEqual(await call('preferences', {}), {
       provider: 'codex', worker: 'flash', would_choose: 'flash', note: 'sin workers disponibles de codex; se usó flash',
+      profile: null, profiles: {}, assignments: {},
     });
     const fallback = await call('run', { task: 'usar fallback', cwd: tmp('colmena-pref-fallback-'), wait: true });
     assert.equal(fallback.worker, 'flash');
@@ -554,7 +594,9 @@ test('preferences falls back across providers with a note, and reload_config rea
     fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('provider: codex', 'provider: opencode'));
     const diff = await call('reload_config', {});
     assert.deepEqual(diff.preferences, ['provider']);
-    assert.deepEqual(await call('preferences', {}), { provider: 'opencode', worker: 'flash', would_choose: 'flash' });
+    assert.deepEqual(await call('preferences', {}), {
+      provider: 'opencode', profile: null, profiles: {}, assignments: {}, worker: 'flash', would_choose: 'flash',
+    });
   } finally { await client.close(); }
 });
 
