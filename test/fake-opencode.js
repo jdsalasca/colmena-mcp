@@ -2,6 +2,7 @@
 // Contract-error knob (no network): FAKE_EXPOSE_MODEL=<id> makes the provider expose a model id in its events.
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 
 const argv = process.argv.slice(2);
 const val = f => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : undefined; };
@@ -42,7 +43,21 @@ const drip = () => {
   }, Number(process.env.FAKE_DRIP_MS || 50));
 };
 
-if (prompt.includes('SLEEP') || prompt.includes('MUTE')) setTimeout(() => {}, 600000);
+// ORPHAN reproduces the leaked-process bug: an intermediate spawns a detached grandchild, publishes
+// both PIDs, and dies; the grandchild keeps running with a ParentProcessId that no longer exists.
+if (prompt.includes('ORPHAN')) {
+  const script = `
+    const { spawn } = require('node:child_process');
+    const fs = require('node:fs');
+    const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 600000)'], { detached: true, stdio: 'ignore' });
+    grandchild.unref();
+    fs.writeFileSync(process.env.FAKE_ORPHAN_PID_FILE, JSON.stringify({ intermediate: process.pid, grandchild: grandchild.pid }));
+    setTimeout(() => process.exit(0), Number(process.env.FAKE_ORPHAN_LIFE_MS || 3000));
+  `;
+  spawn(process.execPath, ['-e', script], { detached: true, stdio: 'ignore', env: process.env }).unref();
+}
+
+if (prompt.includes('SLEEP') || prompt.includes('MUTE') || prompt.includes('ORPHAN')) setTimeout(() => {}, 600000);
 else if (prompt.includes('DRIP')) drip();
 else if (prompt.includes('ERROR_ONCE')) {
   const marker = path.join(dir, '.fake-opencode-error-once');

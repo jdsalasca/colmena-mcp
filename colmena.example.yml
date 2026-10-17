@@ -69,7 +69,7 @@ defaults:
   timeout_min: 60
   exit_grace_s: 20  # tras entrega final de Codex, espera antes de matar el proceso colgado
   retry_transient: 1  # reintenta una vez fallos del proveedor <30 s y reintentables (isRetryable / "Unexpected server error"); 0 lo desactiva
-  stall_timeout_min: 15  # vigilante de inactividad: si events.jsonl no crece en N min mata el job (failed + reintento transitorio); 0 lo desactiva
+  stall_timeout_min: 15  # vigilante: sin eventos en el log ni CPU nueva en el árbol de procesos durante N min mata el job (failed + reintento transitorio); 0 lo desactiva
   wait_max_s: 600   # tope de cada espera wait/run (1 a 1800 s); sube hasta 1800 para jobs largos
   cancel_jobs_on_shutdown: false  # true cancela jobs queued/running al cerrar el servidor MCP; false los deja trabajar y la próxima instancia los adopta
   reserve_usd: 0    # reserva global estimada por job concurrente (0 la desactiva); workers.<alias>.reserve_usd la sobreescribe

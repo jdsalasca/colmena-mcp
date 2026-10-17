@@ -1,9 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { createStore } from './store.js';
 import { EventEmitter } from 'node:events';
-import { attachRun, isProcessAlive, startRun } from './runner.js';
+import { attachRun, isProcessAlive, killTree, startRun } from './runner.js';
+import { descendantsOf, killPlan, sameCreated, snapshot as processSnapshot } from './process-tree.js';
 import { getAdapter } from './providers/index.js';
 import { createLedger } from './ledger.js';
 import { chooseWorker, workerStatus, reserveUsdOf } from './router.js';
@@ -14,8 +16,13 @@ import { TERMINAL, VERDICTS } from './job-states.js';
 
 const RETRY_WINDOW_MS = 30_000;
 const CHECKPOINT_MS = 1000;
+const TREE_SNAPSHOT_MS = 30_000;
+const KILL_VERIFY_MS = 100;
 
-export function createJobManager(config, { bus = new EventEmitter(), writeArtifact = writeFileAtomic } = {}) {
+export function createJobManager(config, {
+  bus = new EventEmitter(), writeArtifact = writeFileAtomic, snapshot = processSnapshot,
+  now = Date.now, treeIntervalMs = TREE_SNAPSHOT_MS,
+} = {}) {
   const store = createStore(config);
   const ledger = createLedger(config);
 
@@ -136,6 +143,8 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
       message: meta.message, deliveredAt: meta.deliveredAt, lastText: savedText,
       usage: { ...(meta.usage ?? {}) }, logOffset: meta.logOffset ?? 0,
       adopted, timer: null, graceTimer: null, checkpointTimer: null, dirty: false, handle: null,
+      treeSeen: new Map(), treeSampled: false, treeTimer: null, treeBusy: false, stallBusy: false, lastCpuMs: null,
+      killPromise: null, killReport: null,
     };
     let lastSessionId = meta.sessionId;
     // A transient retry reuses the same job: the attempt appends to events.jsonl and the polling reader resumes at the saved offset.
@@ -155,7 +164,81 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     const logStamp = () => { try { const s = fs.statSync(eventsPath); return `${s.size}:${s.mtimeMs}`; } catch { return ''; } };
     let lastStamp = logStamp();
     // An adopted job keeps the age of its log, so a long-mute provider dies at the next check instead of waiting a full window.
-    let lastActivityAt = logMtime() ?? Date.now();
+    const logAgeMs = logMtime() == null ? 0 : Math.max(0, Date.now() - logMtime());
+    let lastActivityAt = now() - logAgeMs;
+
+    // The union of every PID seen under the agent root survives dead intermediates: taskkill /T of
+    // the root cannot reach a detached grandchild whose ParentProcessId no longer exists.
+    const mergeTree = (snap, rootPid) => {
+      const root = snap.find(proc => proc.pid === rootPid);
+      if (root && !state.treeSeen.has(rootPid)) state.treeSeen.set(rootPid, root.created);
+      const descendants = descendantsOf(rootPid, snap);
+      for (const proc of descendants) if (!state.treeSeen.has(proc.pid)) state.treeSeen.set(proc.pid, proc.created);
+      const cpuMs = (root?.cpuMs ?? 0) + descendants.reduce((sum, proc) => sum + proc.cpuMs, 0);
+      return { root, descendants, cpuMs };
+    };
+    const takeTreeSnapshot = async () => {
+      const rootPid = state.handle?.pid;
+      if (!rootPid || state.treeBusy) return null;
+      state.treeBusy = true;
+      try {
+        const snap = await snapshot();
+        if (!Array.isArray(snap)) return null;
+        state.treeSampled = true;
+        return mergeTree(snap, rootPid);
+      } catch { return null; } finally { state.treeBusy = false; }
+    };
+    const startTreeTracking = () => {
+      if (state.treeTimer || !(treeIntervalMs > 0)) return;
+      state.treeTimer = setInterval(() => { takeTreeSnapshot().catch(() => {}); }, treeIntervalMs);
+      state.treeTimer.unref?.();
+    };
+
+    const killNow = () => {
+      if (state.killPromise) return state.killPromise;
+      state.killPromise = (async () => {
+        clearInterval(state.treeTimer);
+        state.treeTimer = null;
+        const rootPid = state.handle?.pid;
+        if (!rootPid) return;
+        // Without a single tree sample there is no union to replay: the plain taskkill /T of the root
+        // already covers the current tree, and skipping PowerShell keeps short cancels cheap.
+        if (!state.treeSampled) {
+          await killTree(rootPid);
+          await delay(80);
+          const alive = isProcessAlive(rootPid);
+          state.killReport = { killedPids: alive ? [] : [rootPid], survivors: alive ? [rootPid] : [] };
+          store.update(id, state.killReport);
+          return;
+        }
+        let snap;
+        try { snap = await snapshot(); } catch { snap = []; }
+        if (!Array.isArray(snap)) snap = [];
+        if (snap.length) mergeTree(snap, rootPid);
+        const current = new Map(snap.map(proc => [proc.pid, proc]));
+        const known = state.treeSeen;
+        const targets = killPlan(rootPid, snap, known).map(proc => proc.pid);
+        const rootNow = current.get(rootPid);
+        const rootKnown = known.get(rootPid);
+        const rootIsOurs = process.platform !== 'win32' || !snap.length ||
+          (rootNow && (!rootKnown || sameCreated(rootNow.created, rootKnown)));
+        if (rootIsOurs) targets.push(rootPid);
+        for (const pid of targets) await killTree(pid);
+        await delay(KILL_VERIFY_MS);
+        let after;
+        try { after = await snapshot(); } catch { after = []; }
+        const remaining = new Map((Array.isArray(after) ? after : []).map(proc => [proc.pid, proc]));
+        const survivors = [...new Set(targets)].filter(pid => {
+          const proc = remaining.get(pid);
+          if (!proc) return false;
+          const created = pid === rootPid ? rootKnown : known.get(pid);
+          return created == null || sameCreated(proc.created, created);
+        });
+        state.killReport = { killedPids: [...new Set(targets)].filter(pid => !survivors.includes(pid)), survivors };
+        store.update(id, state.killReport);
+      })();
+      return state.killPromise;
+    };
 
     const finishByGrace = message => {
       if (state.finishedByGrace) return;
@@ -163,7 +246,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
       state.message = message;
       store.update(id, { finishedByGrace: true, message });
       clearTimeout(state.graceTimer);
-      state.handle.kill();
+      killNow();
     };
     const scheduleGrace = () => {
       const elapsed = Date.now() - (state.deliveredAt ?? Date.now());
@@ -231,27 +314,41 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
       else {
         state.timedOut = true;
         store.update(id, { timedOut: true });
-        state.handle.kill();
+        killNow();
       }
     };
 
-    const checkStall = () => {
-      if (state.stalled || state.delivered || state.cancelled || state.timedOut || state.finishedByGrace) return;
-      const stamp = logStamp();
-      if (stamp !== lastStamp) { lastStamp = stamp; lastActivityAt = Date.now(); return; }
-      if (Date.now() - lastActivityAt < stallMs) return;
-      if (hasValidReport()) {
-        finishByGrace('OpenCode ya había entregado un reporte válido; el proceso inactivo fue finalizado y el job se marcó done.');
-        return;
-      }
-      state.stalled = true;
-      state.stallError = `sin actividad durante ${stallMin} min; el proveedor no respondió`;
-      state.handle.kill();
+    const checkStall = async () => {
+      if (state.stallBusy || state.stalled || state.delivered || state.cancelled || state.timedOut || state.finishedByGrace) return;
+      state.stallBusy = true;
+      try {
+        const stamp = logStamp();
+        if (stamp !== lastStamp) { lastStamp = stamp; lastActivityAt = now(); return; }
+        if (now() - lastActivityAt < stallMs) return;
+        if (hasValidReport()) {
+          finishByGrace('OpenCode ya había entregado un reporte válido; el proceso inactivo fue finalizado y el job se marcó done.');
+          return;
+        }
+        // A mute agent may still be running a long legitimate command: CPU growth in its tree proves it is alive.
+        const tree = await takeTreeSnapshot();
+        if (!tree) return;
+        if (state.lastCpuMs == null) { state.lastCpuMs = tree.cpuMs; return; }
+        if (tree.cpuMs > state.lastCpuMs) {
+          state.lastCpuMs = tree.cpuMs;
+          lastActivityAt = now();
+          return;
+        }
+        state.lastCpuMs = tree.cpuMs;
+        state.stalled = true;
+        state.stallError = `sin eventos ni actividad de CPU durante ${stallMin} min`;
+        killNow();
+      } finally { state.stallBusy = false; }
     };
 
     const beginAttempt = () => {
       attemptStartedAt = Date.now();
       attemptError = null;
+      state.killPromise = null;
       state.handle = openHandle({
         onEvent, onOffset,
         offset: state.logOffset,
@@ -259,14 +356,16 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
       });
       store.update(id, { owner: process.pid, pid: state.handle.pid, ...(adopted ? { adopted: true } : {}) });
       if (stallEnabled && !state.stallTimer) {
-        state.stallTimer = setInterval(checkStall, Math.max(20, Math.min(stallMs / 2, 30_000)));
+        state.stallTimer = setInterval(() => { checkStall().catch(() => {}); }, Math.max(20, Math.min(stallMs / 2, 30_000)));
         state.stallTimer.unref?.();
       }
+      startTreeTracking();
+      state.lastCpuMs = null;
       clearTimeout(state.timer);
       state.timer = setTimeout(onTimeout, Math.max(0, timeoutMin * 60000 - (Date.now() - (meta.startedAt ?? Date.now()))));
-      if (state.finishedByGrace) state.handle.kill();
+      if (state.finishedByGrace) killNow();
       else if (state.delivered) scheduleGrace();
-      else if (state.timedOut || state.cancelled) state.handle.kill();
+      else if (state.timedOut || state.cancelled) killNow();
       state.handle.done.then(result => {
         clearTimeout(state.checkpointTimer);
         state.checkpointTimer = null;
@@ -282,7 +381,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
           clearTimeout(state.graceTimer);
           flushCheckpoint();
           store.update(id, { retries, delivered: false, deliveredAt: null, hasFinalMessage: false });
-          lastActivityAt = Date.now();
+          lastActivityAt = now();
           lastStamp = logStamp();
           beginAttempt();
           return;
@@ -295,6 +394,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     live.set(id, state);
     maxSeen = Math.max(maxSeen, live.size);
     state.flushCheckpoint = flushCheckpoint;
+    state.kill = killNow;
     bus.emit('job.started', { id, worker: meta.worker, provider: meta.provider ?? 'desconocido', task: meta.task, kind: meta.kind, ...(adopted ? { adopted: true } : {}) });
     beginAttempt();
   }
@@ -308,6 +408,8 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     clearTimeout(state.timer);
     clearTimeout(state.graceTimer);
     clearTimeout(state.stallTimer);
+    clearInterval(state.treeTimer);
+    state.treeTimer = null;
     live.delete(id);
     const dir = store.jobDir(id);
     let text = lastMessage(id);
@@ -405,7 +507,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
       return status(id);
     }
     const l = live.get(id);
-    if (l) { l.cancelled = true; store.update(id, { cancelRequested: true }); await l.handle.kill(); }
+    if (l) { l.cancelled = true; store.update(id, { cancelRequested: true }); await l.kill(); }
     return status(id);
   }
 
@@ -556,6 +658,8 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
       clearTimeout(state.timer);
       clearTimeout(state.graceTimer);
       clearTimeout(state.stallTimer);
+      clearInterval(state.treeTimer);
+      state.treeTimer = null;
       state.flushCheckpoint?.();
       state.handle.detach?.();
     }

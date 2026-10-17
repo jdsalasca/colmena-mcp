@@ -36,7 +36,7 @@ export function tail(file) {
   }
 }
 
-function killTree(pid) {
+export function killTree(pid) {
   return new Promise(resolve => {
     if (!pid) return resolve();
     if (process.platform === 'win32') return execFile('taskkill', ['/PID', String(pid), '/T', '/F'], () => resolve());
