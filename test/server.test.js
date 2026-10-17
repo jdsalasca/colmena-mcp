@@ -685,6 +685,23 @@ test('MC-4: retry MCP relanza un job fallido con su brief y rechaza los vivos', 
   } finally { await client.close(); }
 });
 
+test('MC-5: retry MCP acepta worker explícito y lo conserva en el job nuevo', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    const failed = await call('run', {
+      task: 'FAIL primer intento', cwd: tmp('luna-retry-worker-mcp-'), isolation: 'inplace', worker: 'alt', wait: true,
+    });
+    assert.equal(failed.state, 'failed');
+
+    const { job_id } = await call('retry', { job_id: failed.id, task: 'reintento correcto', worker: 'luna-max' });
+    const waited = await call('wait', { job_ids: [job_id], timeout_s: 60 });
+    assert.equal(waited.done[0].state, 'done');
+    assert.equal(waited.done[0].worker, 'luna-max');
+    assert.equal((await call('status', { job_id })).worker, 'luna-max');
+  } finally { await client.close(); }
+});
+
 test('errors are returned as tool errors, not crashes', async () => {
   const { client, call } = await connect();
   try {
