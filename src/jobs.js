@@ -92,7 +92,8 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
       isolation: spec.workspace ? 'reuse' : (spec.isolation ?? 'inplace'),
       workdir: ws.workdir, branch: ws.branch, base: ws.base, readonly: ws.readonly, warning: ws.warning,
       parentId: spec.parentId, resumeSessionId: spec.resumeSessionId, ephemeral: !!spec.ephemeral,
-      worker: worker.name, provider: worker.provider, model: worker.model, effort: worker.effort ?? null, note: selection.note,
+      worker: worker.name, provider: worker.provider, model: worker.model, effort: worker.effort ?? null,
+      note: [selection.note, spec.note].filter(Boolean).join('; ') || undefined,
       workerConfig: { ...worker }, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS, stallMin: config.stallTimeoutMin,
       ...(reservedUsd > 0 ? { reservedUsd } : {}),
       owner: process.pid, createdAt: Date.now(),
@@ -407,13 +408,22 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     });
   }
 
-  function retry(id, task) {
+  function retry(id, task, worker) {
     const m = need(id);
     if (!TERMINAL.has(m.state)) throw new Error(`job ${id} sigue ${m.state}; espera a que termine antes de reintentar`);
     const spec = {
-      cwd: m.cwd, parentId: id, kind: m.kind ?? 'run', worker: m.worker, ephemeral: !!m.ephemeral,
+      cwd: m.cwd, parentId: id, kind: m.kind ?? 'run', worker: worker ?? m.worker, ephemeral: !!m.ephemeral,
       workspace: { workdir: m.workdir, branch: m.branch, base: m.base, readonly: m.readonly },
     };
+    if (worker == null) {
+      try {
+        resolveWorker(m.worker);
+      } catch (error) {
+        const selection = chooseWorker(config.settings, ledger);
+        spec.worker = selection.alias;
+        spec.note = [error.message.split(';')[0], `se usó ${selection.alias}`, selection.note].filter(Boolean).join('; ');
+      }
+    }
     if (task != null) return submit({ ...spec, task });
     const brief = readFile(path.join(store.jobDir(id), 'brief.md'));
     if (brief == null) throw new Error(`job ${id} no guarda brief.md; reintenta con task para lanzarlo sin el brief original`);

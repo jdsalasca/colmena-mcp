@@ -558,6 +558,23 @@ plugins: {notify: {enabled: false}}
 `);
   return home;
 }
+function retryRoutingJobs() {
+  const home = tmp('luna-retry-routing-');
+  const file = path.join(home, 'colmena.yml');
+  const writeConfig = ({ retired = true, retiredEnabled = true, altEnabled = true, altBudget = 2 } = {}) => {
+    const role = retired ? 'retired' : 'alt';
+    fs.writeFileSync(file, `
+workers:
+${retired ? `  retired: {provider: opencode, model: fake-old, priority: 1, enabled: ${retiredEnabled}}\n` : ''}  alt: {provider: opencode, model: fake-alt, priority: 2, budget: {monthly_usd: ${altBudget}}, reserve_usd: 0.25, enabled: ${altEnabled}}
+roles: {reporter: ${role}, summarizer: ${role}, reviewer: ${role}}
+defaults: {worker: ${role}, retry_transient: 0}
+plugins: {notify: {enabled: false}}
+`);
+  };
+  writeConfig();
+  const config = getConfig({ ...baseEnv(home), COLMENA_OPENCODE_BIN: fakeOpencode });
+  return { config, jm: createJobManager(config), writeConfig };
+}
 const mc4 = (env = {}) => createJobManager(getConfig({ ...baseEnv(retryHome(), env), COLMENA_OPENCODE_BIN: fakeOpencode }));
 // Stall thresholds in tenths of a second: 0.005 min = 300 ms, well below the general timeout.
 const stallJobs = (env = {}, options) => createJobManager(getConfig({
@@ -647,6 +664,65 @@ test('MC-4: retry pasa por submit y reserva presupuesto como cualquier job', asy
   assert.equal(jm.meta(id2).reservedUsd, 0.25);
   await jm.wait([id2]);
   assert.equal(jm.result(id2).state, 'done');
+});
+
+test('MC-5: retry sustituye por router un worker retirado y registra la sustitución', async () => {
+  const { config, jm, writeConfig } = retryRoutingJobs();
+  const failed = jm.submit(S('FAIL original', { worker: 'retired' }));
+  await jm.wait([failed]);
+  assert.equal(jm.result(failed).state, 'failed');
+
+  writeConfig({ retired: false });
+  config.reloadSettings();
+
+  const retried = jm.retry(failed, 'reintento con worker disponible');
+  assert.equal(jm.meta(retried).worker, 'alt');
+  assert.equal(jm.meta(retried).reservedUsd, 0.25);
+  assert.equal(jm.meta(retried).parentId, failed);
+  assert.ok(jm.list({}).some(job => job.id === retried));
+  const [result] = (await jm.wait([retried])).done;
+  assert.equal(result.state, 'done');
+  assert.equal(result.worker, 'alt');
+  assert.match(result.note, /retired.*alt/);
+  assert.match(jm.status(retried).note, /retired.*alt/);
+});
+
+test('MC-5: retry sustituye por router un worker deshabilitado', async () => {
+  const { config, jm, writeConfig } = retryRoutingJobs();
+  const failed = jm.submit(S('FAIL original', { worker: 'retired' }));
+  await jm.wait([failed]);
+
+  writeConfig({ retiredEnabled: false });
+  config.reloadSettings();
+  const retried = jm.retry(failed, 'reintento tras deshabilitar el worker');
+  const [result] = (await jm.wait([retried])).done;
+  assert.equal(result.state, 'done');
+  assert.equal(result.worker, 'alt');
+  assert.match(result.note, /retired.*deshabilitado.*alt/);
+});
+
+test('MC-5: retry explica cuando el worker original desaparece y no quedan alternativas', async () => {
+  const { config, jm, writeConfig } = retryRoutingJobs();
+  const failed = jm.submit(S('FAIL original', { worker: 'retired' }));
+  await jm.wait([failed]);
+
+  writeConfig({ retired: false, altEnabled: false });
+  config.reloadSettings();
+  const before = jm.list({}).length;
+  assert.throws(() => jm.retry(failed, 'reintento sin worker'), /ningún worker disponible/);
+  assert.equal(jm.list({}).length, before);
+});
+
+test('MC-5: retry con worker explícito respeta el presupuesto y no crea otro job', async () => {
+  const { config, jm, writeConfig } = retryRoutingJobs();
+  const failed = jm.submit(S('FAIL original', { worker: 'retired' }));
+  await jm.wait([failed]);
+
+  writeConfig({ altBudget: 0.1 });
+  config.reloadSettings();
+  const before = jm.list({}).length;
+  assert.throws(() => jm.retry(failed, 'reintento con alt', 'alt'), /worker 'alt' sin presupuesto/);
+  assert.equal(jm.list({}).length, before);
 });
 
 test('MC-11: un job mudo se mata por inactividad, falla con error claro y sin llegar al timeout general', async () => {
