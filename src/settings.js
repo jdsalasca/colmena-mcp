@@ -10,6 +10,7 @@ export const DEFAULT_STANDARDS_PREAMBLE = `## Estándares de trabajo
 - Tienes internet por defecto (búsqueda web en vivo / webfetch): consulta documentación y versiones actuales cuando dependas de una API o dato externo, y cita la fuente.
 - No crees archivos de plan, notas, capturas ni temporales dentro del repositorio fuera de los entregables pedidos; usa una carpeta temporal fuera del repo para capturas.
 - Si están disponibles, usa los skills de superpowers para TDD y verificación antes de completar.
+- No busques fuera del repositorio ni sobre la raíz del disco (nada de \`find /\`, \`dir C:\\\\ /s\`, \`Get-ChildItem C:\\\\ -Recurse\`); si falta \`node_modules\` ejecuta \`npm ci\` en tu worktree.
 - Respeta el formato obligatorio de reporte RESULT/FILES/TESTS/RISKS incluido al final del brief.`;
 
 const Worker = z.object({
@@ -51,6 +52,10 @@ const Present = z.object({ enabled: z.boolean().default(true), default_style: z.
 const Improve = z.object({ enabled: z.boolean().default(true), hints: z.boolean().default(true) });
 const Widget = z.object({ enabled: z.boolean().default(true) });
 const Standards = z.object({ enabled: z.boolean().default(true), preamble: z.string().min(1).default(DEFAULT_STANDARDS_PREAMBLE) });
+const Worktree = z.object({
+  setup: z.string().min(1).optional(),
+  setup_timeout_min: z.number().positive().default(10),
+});
 const Providers = z.object({
   opencode: z.object({ isolate_config: z.boolean().default(true), config_dir: z.string().min(1).optional() }),
 });
@@ -69,6 +74,7 @@ export const DEFAULT_SETTINGS = {
   profiles: {},
   plugins: { notify: {}, report: {}, present: {}, improve: {}, widget: {} },
   standards: { enabled: true, preamble: DEFAULT_STANDARDS_PREAMBLE },
+  worktree: {},
   providers: { opencode: { isolate_config: true } },
 };
 
@@ -106,6 +112,10 @@ export function loadSettings(home, env = process.env) {
       : typeof user.standards === 'object' && !Array.isArray(user.standards)
         ? { ...DEFAULT_SETTINGS.standards, ...user.standards }
         : user.standards,
+    worktree: user.worktree == null ? DEFAULT_SETTINGS.worktree
+      : typeof user.worktree === 'object' && !Array.isArray(user.worktree)
+        ? { ...DEFAULT_SETTINGS.worktree, ...user.worktree }
+        : user.worktree,
     providers: user.providers == null ? DEFAULT_SETTINGS.providers
       : typeof user.providers === 'object' && !Array.isArray(user.providers)
         ? {
@@ -123,6 +133,7 @@ export function loadSettings(home, env = process.env) {
     roles: Roles, defaults: Defaults, preferences: Preferences, profiles: z.record(z.string().min(1), Profile),
     plugins: z.object({ notify: Notify, report: Report, present: Present, improve: Improve, widget: Widget }),
     standards: Standards,
+    worktree: Worktree,
     providers: Providers,
   }).superRefine((settings, ctx) => {
     const names = Object.keys(settings.workers);

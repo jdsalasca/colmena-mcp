@@ -53,6 +53,7 @@ function settingsDiff(before, after) {
     providers: changedFields(before.providers, after.providers),
     plugins: changedFields(before.plugins, after.plugins),
     standards: changedFields(before.standards, after.standards),
+    worktree: changedFields(before.worktree, after.worktree),
   };
 }
 

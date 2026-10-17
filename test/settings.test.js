@@ -40,6 +40,11 @@ test('no yml → defaults', () => {
   assert.match(s.standards.preamble, /webfetch/i);
   assert.match(s.standards.preamble, /fuente/i);
   assert.match(s.standards.preamble, /No crees archivos de plan, notas, capturas ni temporales dentro del repositorio fuera de los entregables pedidos/);
+  assert.match(s.standards.preamble, /No busques fuera del repositorio ni sobre la raíz del disco/);
+  assert.match(s.standards.preamble, /find \//);
+  assert.match(s.standards.preamble, /dir C:\\\\ \/s/);
+  assert.match(s.standards.preamble, /Get-ChildItem C:\\\\ -Recurse/);
+  assert.match(s.standards.preamble, /si falta `node_modules` ejecuta `npm ci` en tu worktree/);
   assert.deepEqual(DEFAULT_SETTINGS.defaults.max_parallel, 4);
 });
 test('cancel_jobs_on_shutdown is opt-in and validated as a boolean', () => {
@@ -208,6 +213,21 @@ test('invalid standards identify the field', () => {
   assert.throws(() => loadSettings(h, env), /standards\.enabled|standards\.preamble/);
   const scalar = withYml('standards: texto\n');
   assert.throws(() => loadSettings(scalar.h, scalar.env), /standards/);
+});
+test('worktree: setup opcional con timeout; defecto sin comando y 10 min', () => {
+  const s = loadSettings(home(), {});
+  assert.equal(s.worktree.setup, undefined);
+  assert.equal(s.worktree.setup_timeout_min, 10);
+  const { h, env } = withYml('worktree: {setup: "npm ci --no-audit --no-fund", setup_timeout_min: 30}\n');
+  const w = loadSettings(h, env).worktree;
+  assert.equal(w.setup, 'npm ci --no-audit --no-fund');
+  assert.equal(w.setup_timeout_min, 30);
+  const empty = withYml('worktree: {setup: ""}\n');
+  assert.throws(() => loadSettings(empty.h, empty.env), /worktree\.setup/);
+  const badTimeout = withYml('worktree: {setup_timeout_min: 0}\n');
+  assert.throws(() => loadSettings(badTimeout.h, badTimeout.env), /worktree\.setup_timeout_min/);
+  const scalar = withYml('worktree: texto\n');
+  assert.throws(() => loadSettings(scalar.h, scalar.env), /worktree/);
 });
 test('OpenCode config isolation defaults on and supports a custom directory', () => {
   const { h, env } = withYml("providers:\n  opencode: {isolate_config: true, config_dir: 'C:/custom/opencode'}\n");

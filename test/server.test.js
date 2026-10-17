@@ -392,7 +392,7 @@ test('reload_config updates workers, reports a compact diff, and preserves setti
     assert.deepEqual(diff, {
       added: ['new'], removed: ['alt'], changed: [{ alias: 'luna-max', fields: ['budget.monthly_usd', 'free', 'model'] }],
       roles: ['presenter', 'reviewer'], defaults: ['exit_grace_s', 'max_parallel', 'worker'], providers: ['opencode.isolate_config'],
-      plugins: ['improve.hints', 'report.enabled'], preferences: [], profiles: ['balanced.mix.new'], standards: [],
+      plugins: ['improve.hints', 'report.enabled'], preferences: [], profiles: ['balanced.mix.new'], standards: [], worktree: [],
     });
     assert.equal((await client.listTools()).tools.some(tool => tool.name === 'report'), false);
     const run = await call('run', { task: 'modelo renovado', worker: 'luna-max', cwd: tmp('luna-reload-c-'), wait: true });
@@ -424,6 +424,17 @@ test('MC-10: reload_config diff incluye los cambios de standards', async () => {
     assert.deepEqual(diff.standards, ['preamble']);
     assert.equal(diff.added.length + diff.removed.length + diff.changed.length
       + diff.roles.length + diff.defaults.length + diff.providers.length + diff.plugins.length + diff.preferences.length, 0);
+  } finally { await client.close(); }
+});
+
+test('reload_config diff incluye los cambios de worktree', async () => {
+  const home = codexOnlyHome();
+  const file = path.join(home, 'colmena.yml');
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8') + 'worktree: {setup: "npm ci", setup_timeout_min: 20}\n');
+    const diff = await call('reload_config', {});
+    assert.deepEqual(diff.worktree.sort(), ['setup', 'setup_timeout_min']);
   } finally { await client.close(); }
 });
 
