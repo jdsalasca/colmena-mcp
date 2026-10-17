@@ -15,15 +15,62 @@ export function buildPrompt({ task, contextFiles = [], handoff = [], kind = 'run
   return p + REPORT_SUFFIX;
 }
 
+const BLOCK_MARKER_RE = /^[ \t]*(?:(?:#{1,6}|[-*+])[ \t]+)+/;
+const EMPHASIS_RE = /^(?:\*{1,3}|_+|`{1,3})/;
+const WHOLE_EMPHASIS_RE = /^(\*{1,3}|_+|`{1,3})(.+)\1$/;
+const KEY_RE = /^(RESULT|FILES|TESTS|RISKS)(?=\s*(?:\*{1,3}|_+|`{1,3})*\s*:|\s*$)/i;
+const COLON_SPACES_RE = /^[ \t]*:?[ \t]*/;
+
+function unwrapEmphasis(text) {
+  const m = text.match(WHOLE_EMPHASIS_RE);
+  return m && !m[2].includes(m[1]) ? m[2].trim() : text.trim();
+}
+
+function parseSectionLine(line) {
+  let l = line.replace(BLOCK_MARKER_RE, '');
+  const whole = l.match(WHOLE_EMPHASIS_RE);
+  if (whole && !whole[2].includes(whole[1])) l = whole[2];
+
+  const stripped = l.replace(EMPHASIS_RE, '');
+  const km = stripped.match(KEY_RE);
+  if (!km) return null;
+
+  let rest = stripped.slice(km[0].length).replace(EMPHASIS_RE, '');
+  rest = rest.replace(COLON_SPACES_RE, '');
+  const open = rest.match(EMPHASIS_RE);
+  if (open) {
+    rest = rest.slice(open[0].length).replace(/^[ \t]+/, '');
+    if (!rest.startsWith(open[0]) && rest.endsWith(open[0])) {
+      rest = rest.slice(0, -open[0].length);
+    }
+  }
+  return { key: km[1].toUpperCase(), text: unwrapEmphasis(rest) };
+}
+
 export function parseReport(text) {
   const raw = typeof text === 'string' ? text : '';
-  const re = /^(RESULT|FILES|TESTS|RISKS):[ \t]*/gm;
-  const marks = [...raw.matchAll(re)];
   const sections = {};
-  marks.forEach((m, i) => {
-    const end = i + 1 < marks.length ? marks[i + 1].index : raw.length;
-    sections[m[1]] = raw.slice(m.index + m[0].length, end).trim();
-  });
+  let currentKey = null;
+  let buffer = [];
+
+  const flush = () => {
+    if (currentKey) sections[currentKey] = buffer.join('\n').trim();
+    buffer = [];
+    currentKey = null;
+  };
+
+  for (const line of raw.split('\n')) {
+    const hit = parseSectionLine(line);
+    if (hit) {
+      flush();
+      currentKey = hit.key;
+      if (hit.text) buffer.push(hit.text);
+    } else if (currentKey) {
+      buffer.push(line);
+    }
+  }
+  flush();
+
   const ok = KEYS.every(k => k in sections);
   return { ok, sections, text: ok ? raw.trim() : raw.trim().slice(0, 1500) };
 }
