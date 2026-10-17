@@ -99,6 +99,25 @@ function nextSuggestions(jm, ids, config) {
   return suggestions;
 }
 
+export function pruneReportDirs(config, { olderThanDays } = {}) {
+  const removed = [];
+  if (olderThanDays == null) return removed;
+  let entries = [];
+  try { entries = fs.readdirSync(config.reportsDir, { withFileTypes: true }); } catch { return removed; }
+  const root = path.resolve(config.reportsDir);
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dir = path.resolve(config.reportsDir, entry.name);
+    if (!dir.startsWith(root + path.sep)) continue;
+    const stat = fs.lstatSync(dir, { throwIfNoEntry: false });
+    if (!stat?.isDirectory()) continue;
+    if (Date.now() - stat.mtimeMs < olderThanDays * 86400000) continue;
+    fs.rmSync(dir, { recursive: true, force: true });
+    removed.push(dir);
+  }
+  return removed;
+}
+
 export async function generateReport({ jm, config, ids, style, title, subtitle, open = false, atomicWriteDependencies } = {}) {
   if (!ids?.length) throw new Error('indica al menos un job_id');
   const styleName = style ?? config.settings.plugins.report.default_style;

@@ -8,7 +8,7 @@ import { createJobManager } from './jobs.js';
 import * as iso from './isolation.js';
 import { notifyPlugin } from './plugins/notify.js';
 import { createNotifier } from './notifier.js';
-import { generateReport } from './plugins/report.js';
+import { generateReport, pruneReportDirs } from './plugins/report.js';
 import { generatePresentation } from './plugins/present.js';
 import { computeStats, DAY_MS } from './stats.js';
 import { buildImprovePrompt, hasRecentImprove, PENDING_FOCUSES, CONTINUOUS_IMPROVEMENT_PROMPT } from './plugins/improve.js';
@@ -312,8 +312,8 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
       return m.verdict ? { ...res, verdict: m.verdict, verdictAt: m.verdictAt } : res;
     });
 
-  tool('cleanup', 'Elimina worktrees y ramas colmena/* creados por este servidor (de un job, o más viejos que N días). Con older_than_days y force purga además las carpetas de jobs terminales (done/failed/cancelled/orphaned) terminados antes del umbral; los no terminales y vivos nunca se borran.',
-    { job_id: z.string().optional(), older_than_days: z.number().optional(), force: z.boolean().optional().describe('necesario para descartar trabajo no fusionado y purgar jobs terminales antiguos') },
+  tool('cleanup', 'Elimina worktrees y ramas colmena/* creados por este servidor (de un job, o más viejos que N días). Con older_than_days y force purga además las carpetas de jobs terminales (done/failed/cancelled/orphaned) terminados antes del umbral y las carpetas de $COLMENA_HOME/reports/ (reportes y decks) anteriores al umbral; los no terminales, vivos y lo reciente nunca se borran.',
+    { job_id: z.string().optional(), older_than_days: z.number().optional(), force: z.boolean().optional().describe('necesario para descartar trabajo no fusionado y purgar jobs y reports antiguos') },
     a => {
       if (!a.job_id && a.older_than_days == null) throw new Error('indica job_id u older_than_days');
       if (a.job_id) {
@@ -322,7 +322,8 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
       } else if (!a.force) throw new Error('older_than_days puede descartar trabajo no fusionado; repite con force:true');
       const result = iso.cleanup(config, { id: a.job_id, olderThanDays: a.older_than_days });
       const jobsRemoved = a.older_than_days == null ? [] : jm.pruneTerminalJobs({ olderThanDays: a.older_than_days, id: a.job_id });
-      return { ...result, jobsRemoved };
+      const reportsRemoved = a.older_than_days == null || !a.force ? [] : pruneReportDirs(config, { olderThanDays: a.older_than_days });
+      return { ...result, jobsRemoved, reportsRemoved };
     });
 
   return { server, jm, notify };
