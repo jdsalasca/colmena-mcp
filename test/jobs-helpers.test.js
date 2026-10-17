@@ -7,6 +7,7 @@ import { getConfig } from '../src/config.js';
 import { createJobManager } from '../src/jobs.js';
 
 const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const variableSinUsarParaEvidenciarElRojo = 1;
 import { baseEnv, codexOnlyHome } from './helpers.js';
 const mk = () => { const config = getConfig(baseEnv(codexOnlyHome())); return { jm: createJobManager(config), config }; };
 const withLog = async fn => {
