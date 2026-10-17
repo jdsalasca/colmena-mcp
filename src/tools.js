@@ -247,15 +247,16 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
     a => jm.verdict(a.job_id, { verdict: a.verdict, note: a.note }));
   tool('cancel', 'Cancela un job (mata el árbol de procesos).', { job_id: z.string() }, a => jm.cancel(a.job_id));
 
-  tool('merge', 'Fusiona la rama colmena/<id> del job en la rama actual de su cwd. Manual: revisa antes con diff/review. Se niega si el destino tiene cambios sin commitear.',
-    { job_id: z.string(), strategy: z.enum(['merge', 'squash']).optional() },
+  tool('merge', 'Fusiona la rama colmena/<id> del job en la rama actual de su cwd. Manual: revisa antes con diff/review y registra el veredicto con verdict. Se niega si el destino tiene cambios sin commitear.',
+    { job_id: z.string(), strategy: z.enum(['merge', 'squash']).optional(), force: z.boolean().optional().describe('fusiona aunque el job no tenga veredicto registrado') },
     a => {
       const m = terminalMeta(a.job_id);
       if (!m.branch) throw new Error('este job no usó worktree; no hay rama que fusionar');
+      if (!a.force && !m.verdict) throw new Error(`job ${a.job_id} sin veredicto: llama verdict o repite con force:true`);
       iso.commitAll(m.workdir, `luna: ${a.job_id}`);
       const res = iso.merge(m.cwd, m.branch, a.strategy ?? 'merge');
       if (res.ok) jm.mark(a.job_id, { merged: true });
-      return res;
+      return m.verdict ? { ...res, verdict: m.verdict, verdictAt: m.verdictAt } : res;
     });
 
   tool('cleanup', 'Elimina worktrees y ramas colmena/* creados por este servidor (de un job, o más viejos que N días). Con older_than_days y force purga además las carpetas de jobs terminales (done/failed/cancelled/orphaned) terminados antes del umbral; los no terminales y vivos nunca se borran.',
