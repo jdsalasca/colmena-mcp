@@ -12,7 +12,7 @@ import { getConfig } from '../src/config.js';
 import * as iso from '../src/isolation.js';
 import { buildServer } from '../src/tools.js';
 
-import { baseEnv, codexOnlyHome } from './helpers.js';
+import { baseEnv, codexOnlyHome, fakeOpencode } from './helpers.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
@@ -42,7 +42,7 @@ async function connect(extraEnv = {}) {
   return { client, call };
 }
 
-const NAMES = ['workers', 'preferences', 'report', 'present', 'reload_config', 'stats', 'improve', 'widget', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'retry', 'summarize', 'compact', 'handoff', 'review', 'verdict', 'cancel', 'merge', 'cleanup'];
+const NAMES = ['workers', 'preferences', 'report', 'present', 'reload_config', 'stats', 'improve', 'widget', 'doctor', 'run', 'run_many', 'status', 'list', 'wait', 'result', 'diff', 'continue', 'retry', 'summarize', 'compact', 'handoff', 'review', 'verdict', 'cancel', 'merge', 'cleanup'];
 
 function providerHome({ codexEnabled = true } = {}) {
   const home = tmp('colmena-pref-');
@@ -203,6 +203,34 @@ test('lists all tools; no model/effort knobs', async () => {
     }
   } finally { await client.close(); }
 });
+test('MC-7: doctor verifica los requisitos sin lanzar jobs', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home, COLMENA_OPENCODE_BIN: fakeOpencode });
+  try {
+    const diag = await call('doctor', {});
+    assert.deepEqual(diag.checks.map(c => c.name), ['node', 'git', 'config', 'home', 'codex', 'opencode', 'widget', 'locks']);
+    assert.equal(diag.ok, true, JSON.stringify(diag.checks));
+    const byName = Object.fromEntries(diag.checks.map(c => [c.name, c]));
+    assert.equal(byName.codex.status, 'ok');
+    assert.equal(byName.opencode.status, 'ok');
+    assert.equal(byName.locks.status, 'ok');
+    assert.deepEqual(await call('list', {}), []);
+  } finally { await client.close(); }
+});
+
+test('MC-7: doctor falla con hint cuando COLMENA_CODEX_BIN no existe', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home, COLMENA_CODEX_BIN: path.join(home, 'codex-nope.exe') });
+  try {
+    const diag = await call('doctor', {});
+    const codex = diag.checks.find(c => c.name === 'codex');
+    assert.equal(codex.status, 'fail');
+    assert.match(codex.detail, /instala/i);
+    assert.match(codex.detail, /COLMENA_CODEX_BIN/);
+    assert.equal(diag.ok, false);
+  } finally { await client.close(); }
+});
+
 test('a running MCP job survives client close and finishes after server restart', async () => {
   const home = codexOnlyHome();
   const first = await connect({ COLMENA_HOME: home, FAKE_DELAY: '900' });
