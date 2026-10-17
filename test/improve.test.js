@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { buildImprovePrompt, pendingFocuses, hasRecentImprove } from '../src/plugins/improve.js';
+import { buildImprovePrompt, pendingFocuses, pendingFocusesFor, hasRecentImprove, improveNext } from '../src/plugins/improve.js';
 import { baseEnv, tmp } from './helpers.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -82,12 +82,38 @@ test('pendingFocuses: descuenta los foci lanzados en la ventana, por cwd', () =>
   }
 });
 
+const strictJm = metas => ({
+  metas: () => metas,
+  list: () => { throw new Error('jm.list no debe usarse: mejora con jm.metas()'); },
+  meta: () => { throw new Error('jm.meta no debe usarse: mejora con jm.metas()'); },
+});
+
 test('hasRecentImprove ignora jobs con createdAt futuro', () => {
   const now = Date.parse('2026-10-15T12:00:00Z');
   const meta = { id: 'future', improveFocus: 'debt', cwd: 'C:\\repo', createdAt: now + 1000 };
-  const jm = { list: () => [{ id: meta.id }], meta: () => meta };
+  const jm = strictJm([meta]);
 
   assert.equal(hasRecentImprove(jm, meta.cwd, { now }), false);
+});
+
+test('pendingFocusesFor e improveNext usan jm.metas() una sola vez (list/meta prohibidos)', () => {
+  const now = Date.parse('2026-10-15T12:00:00Z');
+  const cwd = 'C:\\repo';
+  const mk = (over = {}) => ({ id: 'j1', improveFocus: 'debt', cwd, createdAt: now, ...over });
+
+  const jm0 = strictJm([]);
+  assert.deepEqual(pendingFocusesFor(jm0, cwd, { now }), ['backlog', 'features', 'debt']);
+  assert.equal(hasRecentImprove(jm0, cwd, { now }), false);
+  assert.deepEqual(improveNext(jm0, cwd, { now }).length, 4);
+
+  const jmAll = strictJm([mk({ improveFocus: 'all' })]);
+  assert.deepEqual(pendingFocusesFor(jmAll, cwd, { now }), []);
+  assert.equal(hasRecentImprove(jmAll, cwd, { now }), true);
+  assert.deepEqual(improveNext(jmAll, cwd, { now }), []);
+
+  const jmDebt = strictJm([mk()]);
+  assert.deepEqual(pendingFocusesFor(jmDebt, cwd, { now }), ['backlog', 'features']);
+  assert.ok(improveNext(jmDebt, cwd, { now }).some(s => s.includes('improve backlog')));
 });
 
 test('improve: lanza en worktree con el worker de docs y el prompt esperado (y worker explícito)', async () => {
