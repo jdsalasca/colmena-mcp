@@ -214,6 +214,33 @@ plugins: {notify: {enabled: false}}
   assert.ok(rows.find(r => r.alias === 'cheap').spent_usd >= 0.02);
 });
 
+test('MC-9: workerStatus lee usage.json una sola vez con 3 workers', () => {
+  const s = settingsFor(`
+workers:
+  a: {provider: codex, model: m1, priority: 1, budget: {monthly_usd: 1}}
+  b: {provider: opencode, model: m2, priority: 2}
+  c: {provider: opencode, model: m3, priority: 3, budget: {monthly_usd: 2}}
+roles: {reporter: b, summarizer: b, reviewer: a, presenter: a}
+defaults: {worker: a}
+`);
+  const usagePath = path.join(tmp('colmena-lg-'), 'usage.json');
+  fs.mkdirSync(path.dirname(usagePath), { recursive: true });
+  fs.writeFileSync(usagePath, JSON.stringify({
+    '2026-10': { a: { runs: 1, input_tokens: 0, output_tokens: 0, cost_usd: 0.4 } },
+    reservations: { j1: { worker: 'a', amount: 0.2 }, j2: { worker: 'c', amount: 0.1 } },
+  }));
+  let reads = 0;
+  const readFile = (...args) => { reads += 1; return fs.readFileSync(...args); };
+  const l = createLedger({ usagePath }, { now: () => new Date('2026-10-16T10:00:00Z'), readFile });
+  const rows = Object.fromEntries(workerStatus(s, l).map(r => [r.alias, r]));
+  assert.equal(reads, 1, 'workerStatus debe leer usage.json exactamente una vez');
+  assert.equal(rows.a.spent_usd, 0.4);
+  assert.equal(rows.a.reserved_usd, 0.2);
+  assert.equal(rows.b.spent_usd, 0);
+  assert.equal(rows.b.reserved_usd, 0);
+  assert.equal(rows.c.reserved_usd, 0.1);
+});
+
 test('MC-2: el ledger acumula reservas por job, las libera y reconcilia las huérfanas', () => {
   const cfg = { usagePath: path.join(tmp('colmena-lg-'), 'usage.json') };
   const l = createLedger(cfg, { now: () => new Date('2026-10-16T10:00:00Z') });

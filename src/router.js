@@ -21,9 +21,10 @@ export function workerStatus(settings, ledger) {
   const preferredProvider = preferredProviderOf(settings);
   const mix = activeProfile(settings)?.mix;
   const totalWeight = mix ? Object.values(mix).reduce((sum, weight) => sum + weight, 0) : 0;
+  const { spentByWorker, reservedByWorker } = ledger.snapshot();
   return Object.entries(settings.workers).map(([alias, w]) => {
-    const spent = ledger.spent(alias);
-    const reserved = ledger.reserved(alias);
+    const spent = spentByWorker[alias] ?? 0;
+    const reserved = reservedByWorker[alias] ?? 0;
     const budget = w.budget?.monthly_usd ?? null;
     const free = w.free === true;
     const committed = round(spent + reserved);
