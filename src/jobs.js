@@ -293,6 +293,11 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     beginAttempt();
   }
 
+  const emitFinished = (meta, { state, error, message, costUsd, usage, startedAt, endedAt }) => bus.emit('job.finished', {
+    id: meta.id, worker: meta.worker, provider: meta.provider ?? 'desconocido', kind: meta.kind,
+    state, task: meta.task, error, ...(message ? { message } : {}), costUsd, usage, startedAt, endedAt,
+  });
+
   function finalize(id, meta, state, r, worker, timeoutMin) {
     clearTimeout(state.timer);
     clearTimeout(state.graceTimer);
@@ -324,7 +329,7 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     releaseBudget(id); // the real cost below replaces the estimate; a real overrun stays visible in the ledger
     try { ledger.record(meta.worker, state.usage, patch.costUsd); } catch { /* bookkeeping must never break a job */ }
     const updated = store.update(id, patch);
-    bus.emit('job.finished', { id, worker: meta.worker, provider: meta.provider ?? 'desconocido', kind: meta.kind, state: updated.state, task: meta.task, error: updated.error, ...(updated.message ? { message: updated.message } : {}), costUsd: patch.costUsd, usage: state.usage, startedAt: updated.startedAt, endedAt: updated.endedAt });
+    emitFinished(meta, { ...updated, costUsd: patch.costUsd, usage: state.usage });
     finished.get(id)?.resolve();
     pump();
   }
@@ -386,7 +391,8 @@ export function createJobManager(config, { bus = new EventEmitter(), writeArtifa
     const qi = queue.findIndex(q => q.id === id);
     if (qi >= 0) {
       queue.splice(qi, 1);
-      store.update(id, { state: 'cancelled', endedAt: Date.now() });
+      const updated = store.update(id, { state: 'cancelled', endedAt: Date.now() });
+      emitFinished(m, { ...updated, costUsd: 0, usage: {} });
       releaseBudget(id);
       fs.rmSync(path.join(store.jobDir(id), 'prompt.txt'), { force: true });
       finished.get(id)?.resolve();
