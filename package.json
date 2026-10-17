@@ -7,6 +7,7 @@
     "colmena-mcp": "src/server.js"
   },
   "scripts": {
+    "lint": "eslint .",
     "test": "node --test \"test/*.test.js\"",
     "start": "node src/server.js",
     "smoke": "node scripts/smoke.js"
@@ -19,5 +20,10 @@
     "@modelcontextprotocol/sdk": "^1.32.1",
     "yaml": "^2.9.1",
     "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "globals": "^17.13.0"
   }
 }

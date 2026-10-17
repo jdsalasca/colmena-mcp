@@ -3,11 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { getConfig } from '../src/config.js';
 import { createJobManager } from '../src/jobs.js';
 
-const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-codex.js');
 const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
 import { baseEnv, codexOnlyHome } from './helpers.js';
 const mk = () => { const config = getConfig(baseEnv(codexOnlyHome())); return { jm: createJobManager(config), config }; };
