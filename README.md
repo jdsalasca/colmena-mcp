@@ -14,7 +14,7 @@ Servidor MCP (stdio) para que **Claude Code orqueste y valide, como un product m
 
 ## Requisitos
 
-Node ≥ 22, git, y al menos uno de: **Codex CLI** autenticado (necesitas una versión reciente si usas esfuerzo `max`; 0.162 funciona, 0.130 lo rechaza) y/o **OpenCode** (≥ 1.18). Los binarios se detectan solos (`codex.exe` más reciente de `%LOCALAPPDATA%\OpenAI\Codex\bin`; el `opencode.exe` real detrás del shim npm).
+Node ≥ 22, git, y al menos uno de: **Codex CLI** autenticado (necesitas una versión reciente si usas esfuerzo `max`; 0.162 funciona, 0.130 lo rechaza) y/o **OpenCode** (≥ 1.18). Los binarios se detectan solos (`codex.exe` más reciente de `%LOCALAPPDATA%\OpenAI\Codex\bin`; el `opencode.exe` real detrás del shim npm). Antes de delegar, la tool `doctor` comprueba estos requisitos (binarios resueltos, git, `colmena.yml`, `COLMENA_HOME` escribible, widget y locks) sin gastar llamadas ni lanzar agentes.
 
 ## Instalación
 
@@ -96,6 +96,7 @@ Notas:
 
 | Tool | Para qué |
 |---|---|
+| `doctor` | Diagnóstico previo sin gastar llamadas: binarios Codex/OpenCode, Node, git, `colmena.yml`, `COLMENA_HOME` escribible, widget (warn) y locks obsoletos; devuelve `ok` y `checks` accionables |
 | `workers` | Workers con prioridad, fortalezas, preferencia (`preferred`), participación (`profile_share`), gasto del mes, reservado, restante y disponibilidad |
 | `preferences` | Consulta proveedor, perfiles, conteos y próxima elección; activa un perfil o crea/actualiza con `save_profile` |
 | `stats` | Resumen histórico por estado, worker y tipo (`since_days`, defecto 30) |

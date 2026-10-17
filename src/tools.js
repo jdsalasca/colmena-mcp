@@ -16,6 +16,7 @@ import { createWidgetController } from './plugins/widget.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { TERMINAL } from './job-states.js';
 import { MixWeights, ProfileProvider } from './settings.js';
+import { runDoctor } from './doctor.js';
 
 const { version: packageVersion } = createRequire(import.meta.url)('../package.json');
 
@@ -123,6 +124,8 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
   };
 
   tool('workers', 'Lista los workers de colmena.yml con prioridad, fortalezas, preferencia, participación del perfil activo, gasto del mes, reservas de jobs vivos, presupuesto restante y disponibilidad. Úsalo para decidir a quién delegar.', {}, () => jm.workers());
+
+  tool('doctor', 'Verificación previa sin gastar llamadas ni lanzar agentes: revisa Node, git, binarios de Codex/OpenCode resueltos, colmena.yml cargado, COLMENA_HOME escribible, ejecutable del widget (warn) y locks obsoletos de usage.json. Devuelve ok y checks con instrucciones accionables.', {}, () => runDoctor(config));
 
   const widget = createWidgetController({ home: config.home, ...widgetDependencies });
   const widgetTool = tool('widget', 'Agrega el widget animado al escritorio, consulta su estado o ciérralo. El ejecutable y COLMENA_HOME se resuelven desde la configuración del servidor.',
