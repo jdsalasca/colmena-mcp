@@ -95,7 +95,7 @@ Notas:
 | `preferences` | Consulta o cambia en caliente `auto` / `codex` / `opencode`; muestra también el worker que elegiría el router |
 | `stats` | Resumen histórico por estado, worker y tipo (`since_days`, defecto 30) |
 | `reload_config` | Relee y valida `colmena.yml`; jobs posteriores usan los cambios sin reiniciar |
-| `run` / `run_many` | Lanza uno o varios agentes (`worker?`, `kind?`, `isolation?`, `wait: true` espera el reporte) |
+| `run` / `run_many` | Lanza uno o varios agentes (`worker?`, `kind?`, `isolation?`, `wait: true` espera el reporte; `run_many` con `wait: true` cierra la ronda en una llamada y devuelve `{ done, pending }` como `wait`, con `timeout_s` recortado a `defaults.wait_max_s`) |
 | `wait`, `status`, `list` | Seguimiento (`wait` hasta `defaults.wait_max_s`, defecto 600 s, tope 1800 s; `timeout_s` entre 1 y 1800; al vencer devuelve `pending` con estado y `elapsedS` sin cancelar; `mode: any/all`; añade `hint` de mejora continua al cerrar una ronda) |
 | `result` | Reporte `RESULT/FILES/TESTS/RISKS`, archivos, diffstat, rama, worker, modelo, proveedor, esfuerzo y costos registrado/nominal |
 | `diff` | Diff truncado; el completo queda en disco |
@@ -113,7 +113,7 @@ Notas:
 | `improve` | Mejora continua: agente en worktree que escribe `docs/backlog/<fecha>-<focus>.md` (backlog/features/debt/all) con briefs listos para delegar |
 | `widget` | `action: start \| status \| stop`: agrega el widget al escritorio, consulta su PID verificado o lo cierra |
 
-Flujo recomendado: `workers` → `run_many` → `wait` → `result` → `review`/`diff` → `verdict` → `merge` → `report` → `present` → auditar el deck → `improve`. La skill [`skills/colmena-delegation`](skills/colmena-delegation/SKILL.md) explica cómo redactar los briefs y validar la presentación antes de compartirla.
+Flujo recomendado: `workers` → `run_many` → `wait` → `result` → `review`/`diff` → `verdict` → `merge` → `report` → `present` → auditar el deck → `improve`. Para cerrar la ronda en una llamada, `run_many` con `wait: true` espera los jobs y devuelve `{ done, pending }` sin cancelar al vencer. La skill [`skills/colmena-delegation`](skills/colmena-delegation/SKILL.md) explica cómo redactar los briefs y validar la presentación antes de compartirla.
 
 ### Widget de escritorio
 Usa `widget {action: start}` para abrir la escena; `status` informa `running` solo cuando el PID del registro coincide con la ruta real del proceso, y `stop` cierra ese proceso y espera su salida. El servidor hereda `COLMENA_HOME`; el registro Rust está en `$COLMENA_HOME/widget-process.json`. `plugins.widget.enabled` (defecto `true`) habilita la tool. El ejecutable se busca primero en `COLMENA_WIDGET_BIN` y luego en `widget/dist/colmena-widget.exe`. Si falta, compílalo dentro de `widget/` con `cargo build --release` y copia `target/release/colmena-widget.exe` a `dist/`.

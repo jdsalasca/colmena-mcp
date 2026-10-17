@@ -580,6 +580,45 @@ test('run_many + wait, worktree flow, diff, merge, cleanup', async () => {
   } finally { await client.close(); }
 });
 
+test('MC-6: run_many con wait:true devuelve { done, pending } como wait y sin wait conserva la lista de job_id', async () => {
+  const { client, call } = await connect();
+  try {
+    const repo = tmp('luna-mc6-'); git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n'); git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'i');
+    const plain = await call('run_many', { tasks: [
+      { task: 'EDIT uno', cwd: repo },
+      { task: 'hola', cwd: tmp('luna-mc6-plain2-'), isolation: 'inplace' },
+    ] });
+    assert.equal(plain.length, 2);
+    assert.ok(plain.every(m => m.job_id && !m.error));
+
+    const waited = await call('run_many', { tasks: [
+      { task: 'EDIT dos', cwd: repo },
+      { task: 'hola', cwd: tmp('luna-mc6-wait2-'), isolation: 'inplace' },
+    ], wait: true, timeout_s: 60 });
+    assert.equal(waited.done.length, 2);
+    assert.equal(waited.pending.length, 0);
+    assert.ok(waited.done.every(d => d.state === 'done' && d.report));
+    const edit = waited.done.find(d => d.files?.includes('edited.txt'));
+    assert.ok(edit && edit.branch);
+  } finally { await client.close(); }
+});
+
+test('MC-6: run_many con wait:true recorta timeout_s a wait_max_s y no cancela al vencer', async () => {
+  const { client, call } = await connect({ COLMENA_WAIT_MAX_S: '2' });
+  try {
+    const slow = await call('run_many', { tasks: [
+      { task: 'SLEEP', cwd: tmp('luna-mc6-slow-'), isolation: 'inplace' },
+    ], wait: true, timeout_s: 1800 });
+    assert.equal(slow.done.length, 0);
+    assert.equal(slow.pending.length, 1);
+    assert.ok(['queued', 'running'].includes(slow.pending[0].state));
+    assert.equal((await call('status', { job_id: slow.pending[0].id })).state, slow.pending[0].state);
+    await call('cancel', { job_id: slow.pending[0].id });
+  } finally { await client.close(); }
+});
+
 test('cleanup refuses to discard unmerged work unless force', async () => {
   const { client, call } = await connect();
   try {
