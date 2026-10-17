@@ -234,9 +234,14 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
       return w.done[0] ?? { job_id: id, ...w.pending[0] };
     });
 
-  tool('run_many', 'Lanza varios agentes en paralelo (tope COLMENA_MAX_PARALLEL simultáneos, el resto en cola).',
-    { tasks: z.array(z.object(taskShape)).min(1).max(20) },
-    async ({ tasks }) => tasks.map(t => { try { return { job_id: jm.submit(toSpec(t)) }; } catch (e) { return { error: e.message }; } }));
+  tool('run_many', 'Lanza varios agentes en paralelo (tope COLMENA_MAX_PARALLEL simultáneos, el resto en cola). Con wait:true espera la ronda (mismo tope defaults.wait_max_s que wait) y devuelve { done, pending } con los reportes, sin cancelar al vencer.',
+    { tasks: z.array(z.object(taskShape)).min(1).max(20), wait: z.boolean().optional(), timeout_s: timeoutSShape },
+    async ({ tasks, wait, timeout_s }) => {
+      const submitted = tasks.map(t => { try { return { job_id: jm.submit(toSpec(t)) }; } catch (e) { return { error: e.message }; } });
+      if (!wait) return submitted;
+      const ids = submitted.filter(s => s.job_id).map(s => s.job_id);
+      return jm.wait(ids, { timeoutS: timeout_s ?? 120 });
+    });
 
   tool('handoff', 'Lanza un agente nuevo con el resumen de otros agentes como contexto.',
     { ...taskShape, from: z.array(z.string()).min(1) },
