@@ -4,12 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { getConfig } from '../src/config.js';
 import { createJobManager } from '../src/jobs.js';
 import { writeFileAtomic } from '../src/atomic-write.js';
 
-const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-codex.js');
 const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
 function repo() {

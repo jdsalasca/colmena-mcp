@@ -6,7 +6,7 @@ import path from 'node:path';
 import { getConfig } from '../src/config.js';
 
 test('defaults', () => {
-  const c = getConfig({ LUNA_HOME: 'X:\h', LUNA_CODEX_BIN: 'C:\c\codex.exe' });
+  const c = getConfig({ LUNA_HOME: 'X:h', LUNA_CODEX_BIN: 'C:ccodex.exe' });
   assert.equal(c.maxParallel, 4);
   assert.equal(c.timeoutMin, 60);
   assert.equal(c.exitGraceS, 20);
@@ -29,8 +29,8 @@ test('MC-11: COLMENA_STALL_TIMEOUT_MIN overrides YAML and reloadSettings picks i
   assert.equal(envOverride.stallTimeoutMin, 0);
 });
 test('LUNA_HOME moves dirs', () => {
-  const c = getConfig({ LUNA_HOME: 'X:\h', LUNA_CODEX_BIN: 'a.exe' });
-  assert.ok(c.jobsDir.startsWith('X:\h') || c.jobsDir.startsWith('X:/h') || c.jobsDir.includes('h'));
+  const c = getConfig({ LUNA_HOME: 'X:h', LUNA_CODEX_BIN: 'a.exe' });
+  assert.ok(c.jobsDir.startsWith('X:h') || c.jobsDir.startsWith('X:/h') || c.jobsDir.includes('h'));
   assert.ok(c.jobsDir.endsWith('jobs'));
   assert.ok(c.worktreesDir.endsWith('worktrees'));
 });
@@ -40,8 +40,8 @@ test('js bin runs through node', () => {
   assert.deepEqual(c.codex.prefixArgs, ['x.js']);
 });
 test('exe bin as-is', () => {
-  const c = getConfig({ LUNA_CODEX_BIN: 'C:\c\codex.exe', LUNA_HOME: 'h' });
-  assert.equal(c.codex.bin, 'C:\c\codex.exe');
+  const c = getConfig({ LUNA_CODEX_BIN: 'C:ccodex.exe', LUNA_HOME: 'h' });
+  assert.equal(c.codex.bin, 'C:ccodex.exe');
   assert.deepEqual(c.codex.prefixArgs, []);
 });
 test('env numbers', () => {
