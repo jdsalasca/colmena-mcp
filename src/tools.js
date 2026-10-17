@@ -49,6 +49,7 @@ function settingsDiff(before, after) {
     preferences: changedFields(before.preferences, after.preferences),
     providers: changedFields(before.providers, after.providers),
     plugins: changedFields(before.plugins, after.plugins),
+    standards: changedFields(before.standards, after.standards),
   };
 }
 
