@@ -84,6 +84,7 @@ const taskShape = {
   isolation: isolationEnum,
   context_files: z.array(z.string()).optional().describe('Rutas que el agente debe leer primero'),
   handoff_from: z.array(z.string()).optional().describe('job_ids cuyos resúmenes se inyectan como contexto'),
+  requires: z.array(z.string().min(1)).optional().describe("Requisitos comprobados antes de lanzar al agente: binarios ('docker', 'node', 'git'...), 'port:5432' o 'url:http://...'. Si fallan, el job termina failed con error 'preflight' y hints, sin gastar cuota"),
 };
 
 export function buildServer(config, { atomicWriteDependencies, widgetDependencies } = {}) {
@@ -100,7 +101,7 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
 
   const toSpec = a => {
     const cwd = a.cwd ?? process.cwd();
-    return { task: a.task, worker: a.worker, taskKind: a.kind, cwd, isolation: a.isolation ?? (iso.isGitRepo(cwd) ? 'worktree' : 'inplace'), contextFiles: a.context_files, handoff: a.handoff_from };
+    return { task: a.task, worker: a.worker, taskKind: a.kind, cwd, isolation: a.isolation ?? (iso.isGitRepo(cwd) ? 'worktree' : 'inplace'), contextFiles: a.context_files, handoff: a.handoff_from, requires: a.requires };
   };
   const terminalMeta = id => { const m = jm.meta(id); if (!TERMINAL.has(m.state)) throw new Error(`job ${id} sigue ${m.state}`); return m; };
   const countsForProfile = name => {
