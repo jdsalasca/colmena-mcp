@@ -84,6 +84,7 @@ const taskShape = {
   isolation: isolationEnum,
   context_files: z.array(z.string()).optional().describe('Rutas que el agente debe leer primero'),
   handoff_from: z.array(z.string()).optional().describe('job_ids cuyos resúmenes se inyectan como contexto'),
+  skills: z.enum(['on', 'off']).optional().describe('on (defecto): skills disponibles | off: el prompt ordena ignorar skills y en OpenCode se desactiva la carga de .claude/skills; Codex no ofrece un interruptor global, así que solo aplica el prompt'),
 };
 
 export function buildServer(config, { atomicWriteDependencies, widgetDependencies } = {}) {
@@ -100,7 +101,7 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
 
   const toSpec = a => {
     const cwd = a.cwd ?? process.cwd();
-    return { task: a.task, worker: a.worker, taskKind: a.kind, cwd, isolation: a.isolation ?? (iso.isGitRepo(cwd) ? 'worktree' : 'inplace'), contextFiles: a.context_files, handoff: a.handoff_from };
+    return { task: a.task, worker: a.worker, taskKind: a.kind, cwd, isolation: a.isolation ?? (iso.isGitRepo(cwd) ? 'worktree' : 'inplace'), contextFiles: a.context_files, handoff: a.handoff_from, skills: a.skills };
   };
   const terminalMeta = id => { const m = jm.meta(id); if (!TERMINAL.has(m.state)) throw new Error(`job ${id} sigue ${m.state}`); return m; };
   const countsForProfile = name => {
@@ -274,12 +275,15 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
     });
   tool('result', 'Reporte compacto (RESULT/FILES/TESTS/RISKS), archivos tocados y rama.', { job_id: z.string(), detail: detailEnum }, a => jm.result(a.job_id, { detail: a.detail ?? 'min' }));
 
-  tool('diff', 'Diff del trabajo (truncado; el completo queda en disco).', { job_id: z.string(), max_chars: z.number().optional() }, a => {
+  tool('diff', 'Diff del trabajo (truncado; el completo queda en disco). Si el job cambió de rama, avisa y usa el commit real.', { job_id: z.string(), max_chars: z.number().optional() }, a => {
     const m = jm.meta(a.job_id);
     const max = a.max_chars ?? 6000;
-    const full = iso.diff(m.workdir, m.base, 50_000_000);
+    let full = iso.diff(m.workdir, m.base, 50_000_000);
+    const bm = m.branchMismatch;
+    if (bm && !full.text.trim() && bm.headCommit && bm.headCommit !== m.base) full = iso.diffCommits(m.workdir, m.base, bm.headCommit, 50_000_000);
     const d = { text: full.text.slice(0, max), truncated: full.text.length > max };
     const out = { text: d.text, truncated: d.truncated };
+    if (bm) out.warning = `el job cambió de rama (esperada ${bm.expected}, actual ${bm.actual}); diff desde el commit real ${String(bm.headCommit).slice(0, 12)}`;
     if (d.truncated) { const f = path.join(jm.jobDir(a.job_id), 'diff.patch'); writeFileAtomic(f, full.text, atomicWriteDependencies); out.fullPath = f; }
     return out;
   });
@@ -307,16 +311,24 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
     a => jm.verdict(a.job_id, { verdict: a.verdict, note: a.note }));
   tool('cancel', 'Cancela un job (mata el árbol de procesos).', { job_id: z.string() }, a => jm.cancel(a.job_id));
 
-  tool('merge', 'Fusiona la rama colmena/<id> del job en la rama actual de su cwd. Manual: revisa antes con diff/review y registra el veredicto con verdict. Se niega si el destino tiene cambios sin commitear.',
+  tool('merge', 'Fusiona la rama colmena/<id> del job en la rama actual de su cwd. Manual: revisa antes con diff/review y registra el veredicto con verdict. Se niega si el destino tiene cambios sin commitear. Si el job cambió de rama, avisa y fusiona el commit real del worktree.',
     { job_id: z.string(), strategy: z.enum(['merge', 'squash']).optional(), force: z.boolean().optional().describe('fusiona aunque el job no tenga veredicto registrado') },
     a => {
       const m = terminalMeta(a.job_id);
       if (!m.branch) throw new Error('este job no usó worktree; no hay rama que fusionar');
       if (!a.force && !m.verdict) throw new Error(`job ${a.job_id} sin veredicto: llama verdict o repite con force:true`);
       iso.commitAll(m.workdir, `luna: ${a.job_id}`);
-      const res = iso.merge(m.cwd, m.branch, a.strategy ?? 'merge');
+      let source = m.branch;
+      if (m.branchMismatch) {
+        const head = iso.headRef(m.workdir);
+        source = head && head.branch !== 'HEAD' ? head.branch : (head?.commit ?? m.branchMismatch.headCommit ?? m.branch);
+      }
+      const res = iso.merge(m.cwd, source, a.strategy ?? 'merge');
       if (res.ok) jm.mark(a.job_id, { merged: true });
-      return m.verdict ? { ...res, verdict: m.verdict, verdictAt: m.verdictAt } : res;
+      const out = m.verdict ? { ...res, verdict: m.verdict, verdictAt: m.verdictAt } : res;
+      return m.branchMismatch
+        ? { ...out, warning: `el job cambió de rama (esperada ${m.branchMismatch.expected}, actual ${m.branchMismatch.actual}); se fusionó ${source}` }
+        : out;
     });
 
   tool('cleanup', 'Elimina worktrees y ramas colmena/* creados por este servidor (de un job, o más viejos que N días). Con older_than_days y force purga además las carpetas de jobs terminales (done/failed/cancelled/orphaned) terminados antes del umbral y las carpetas de $COLMENA_HOME/reports/ (reportes y decks) anteriores al umbral; los no terminales, vivos y lo reciente nunca se borran.',

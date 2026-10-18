@@ -35,6 +35,35 @@ export function isMerged(cwd, branch, base) {
   return tryGit(cwd, 'merge-base', '--is-ancestor', branch, 'HEAD').ok;
 }
 
+export function headRef(workdir) {
+  const branch = tryGit(workdir, 'rev-parse', '--abbrev-ref', 'HEAD');
+  const commit = tryGit(workdir, 'rev-parse', 'HEAD');
+  if (!branch.ok || !commit.ok) return null;
+  return { branch: branch.out, commit: commit.out };
+}
+
+export function branchMismatch(workdir, expected, base) {
+  if (!expected || !isGitRepo(workdir)) return null;
+  const head = headRef(workdir);
+  if (!head) return null;
+  const ahead = ref => (base ? Number(tryGit(workdir, 'rev-list', '--count', `${base}..${ref}`).out) || 0 : 0);
+  const expectedAhead = ahead(expected);
+  const headAhead = ahead(head.commit);
+  if (head.branch === expected && !(expectedAhead === 0 && headAhead > 0)) return null;
+  return { expected, actual: head.branch, headCommit: head.commit };
+}
+
+export function dirtyFiles(workdir) {
+  const r = tryGit(workdir, 'status', '--porcelain');
+  if (!r.ok) return [];
+  return r.out.split('\n').filter(Boolean).map(line => line.slice(3));
+}
+
+export function diffCommits(workdir, base, commit, maxChars = 20000) {
+  const text = git(workdir, 'diff', base, commit);
+  return text.length > maxChars ? { text: text.slice(0, maxChars), truncated: true } : { text, truncated: false };
+}
+
 export function prepare(config, { cwd, isolation, id }) {
   if (isolation === 'inplace') return { workdir: cwd, readonly: false };
   if (isolation === 'readonly') return { workdir: cwd, readonly: true };

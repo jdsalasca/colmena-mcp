@@ -114,7 +114,7 @@ export function createJobManager(config, {
     const ws = spec.workspace ?? iso.prepare(config, { cwd, isolation: spec.isolation ?? 'inplace', id });
     const kind = spec.kind ?? 'run';
     const prompt = spec.rawPrompt ?? buildPrompt({
-      task: spec.task, contextFiles: spec.contextFiles, handoff: handoffTexts, kind, standards: config.settings.standards, branch: ws.branch,
+      task: spec.task, contextFiles: spec.contextFiles, handoff: handoffTexts, kind, standards: config.settings.standards, branch: ws.branch, skills: spec.skills,
     });
     const reservedUsd = reservableAmount(worker);
     store.create({
@@ -125,6 +125,7 @@ export function createJobManager(config, {
       worker: worker.name, provider: worker.provider, model: worker.model, effort: worker.effort ?? null,
       note: [selection.note, spec.note].filter(Boolean).join('; ') || undefined,
       workerConfig: { ...worker }, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS, stallMin: config.stallTimeoutMin,
+      ...(spec.skills === 'off' ? { skills: 'off' } : {}),
       ...(reservedUsd > 0 ? { reservedUsd } : {}),
       owner: process.pid, createdAt: Date.now(),
     });
@@ -179,7 +180,7 @@ export function createJobManager(config, {
         readonly: meta.readonly, resumeSessionId: meta.resumeSessionId, ephemeral: meta.ephemeral, worker,
       }), {
         cwd: meta.workdir, logPath: path.join(dir, 'events.jsonl'), stderrPath: path.join(dir, 'stderr.log'),
-        parseLine: adapter.parseLine, env: adapter.env?.(config), ...options,
+        parseLine: adapter.parseLine, env: adapter.env?.(config, { skills: meta.skills }), ...options,
       }));
       fs.rmSync(path.join(dir, 'prompt.txt'), { force: true });
     }
@@ -483,6 +484,10 @@ export function createJobManager(config, {
     if (patch.state === 'done' && meta.kind === 'compact' && meta.parentId && text) persistText(path.join(store.jobDir(meta.parentId), 'summary.md'), text);
     if (meta.kind === 'run' && !meta.readonly) {
       try { const ch = iso.changes(meta.workdir, meta.base); patch.files = ch.files; patch.diffstat = ch.diffstat; } catch {}
+      if (meta.branch) {
+        try { const mismatch = iso.branchMismatch(meta.workdir, meta.branch, meta.base); if (mismatch) patch.branchMismatch = mismatch; } catch {}
+        try { const dirty = iso.dirtyFiles(meta.workdir); if (dirty.length) patch.dirtyWorktree = dirty.slice(0, 20); } catch {}
+      }
     }
     patch.nominalCostUsd = costOf(worker, state.usage);
     patch.costUsd = worker.free ? 0 : patch.nominalCostUsd;
@@ -523,6 +528,14 @@ export function createJobManager(config, {
     if (m.branch) out.branch = m.branch;
     out.workdir = m.workdir;
     if (m.warning) out.warning = m.warning;
+    if (m.branchMismatch) {
+      out.branchMismatch = m.branchMismatch;
+      out.warning = [out.warning, `cambió de rama: esperada ${m.branchMismatch.expected}, actual ${m.branchMismatch.actual} (HEAD ${String(m.branchMismatch.headCommit).slice(0, 12)})`].filter(Boolean).join('; ');
+    }
+    if (m.dirtyWorktree?.length) {
+      out.dirtyWorktree = m.dirtyWorktree;
+      out.warning = [out.warning, `worktree con cambios sin commitear: ${m.dirtyWorktree.join(', ')}`].filter(Boolean).join('; ');
+    }
     if (m.error) out.error = m.error;
     if (detail !== 'min') {
       Object.assign(out, { sessionId: m.sessionId, usage: m.usage, jobDir: store.jobDir(id), eventsLog: path.join(store.jobDir(id), 'events.jsonl') });
