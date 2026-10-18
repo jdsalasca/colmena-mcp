@@ -60,6 +60,14 @@ test('codex parseLine verified events and garbage', () => {
   assert.equal(parseLine('{"type":"turn.started"}').kind, 'other');
   assert.equal(parseLine('').kind, 'other');
 });
+test('codex parseLine: los items de herramienta exponen la última llamada', () => {
+  const { parseLine } = codex;
+  assert.deepEqual(parseLine('{"type":"item.started","item":{"id":"i","type":"command_execution","command":"bash -lc ls","status":"in_progress"}}'), { kind: 'tool', tool: 'command: bash -lc ls' });
+  assert.deepEqual(parseLine('{"type":"item.completed","item":{"id":"i","type":"file_change","changes":[{"path":"src/a.js"},{"path":"src/b.js"}],"status":"completed"}}'), { kind: 'tool', tool: 'file_change: src/a.js, src/b.js' });
+  assert.deepEqual(parseLine('{"type":"item.completed","item":{"type":"mcp_tool_call","server":"colmena","tool":"wait"}}'), { kind: 'tool', tool: 'mcp: colmena.wait' });
+  assert.deepEqual(parseLine('{"type":"item.completed","item":{"type":"web_search","query":"opencode json"}}'), { kind: 'tool', tool: 'web_search: opencode json' });
+  assert.equal(parseLine('{"type":"item.completed","item":{"type":"reasoning","text":"pensando"}}').kind, 'other');
+});
 test('Codex completion signal is turn usage after a final message', () => {
   assert.equal(codex.completesOn(codex.parseLine('{"type":"turn.completed","usage":{}}')), true);
   assert.equal(codex.completesOn(codex.parseLine('{"type":"turn.started"}')), false);
