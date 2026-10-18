@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { improveNext } from './improve.js';
+import { notesText } from './notes.js';
 import { jobMetrics } from '../job-metrics.js';
 import { TERMINAL } from '../job-states.js';
 import { writeFileAtomic } from '../atomic-write.js';
@@ -11,6 +12,33 @@ const BUILTIN_STYLES = path.join(path.dirname(fileURLToPath(import.meta.url)), '
 
 export const escapeHtml = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const para = s => escapeHtml(s).replace(/\n/g, '<br>');
+
+export const gitText = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 4 * 1024 * 1024 }).trim();
+
+export function githubRepoSlug(url) {
+  const match = String(url ?? '').trim().match(/^(?:git@|https?:\/\/|ssh:\/\/git@|git:\/\/)github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?$/);
+  return match ? match[1] : null;
+}
+
+function originSlug(cwd, git) {
+  try { return githubRepoSlug(git(cwd, 'remote', 'get-url', 'origin')); } catch { return null; }
+}
+
+export function jobCommits({ cwd, branch, base } = {}, { git = gitText } = {}) {
+  if (!branch) return [];
+  const range = base ? `${base}..${branch}` : branch;
+  let raw = '';
+  try { raw = git(cwd, 'log', '--max-count=10', '--format=%h%x09%s', range); } catch { return []; }
+  const lines = raw.split('\n').filter(Boolean).slice(0, 10);
+  if (!lines.length) return [];
+  const slug = originSlug(cwd, git);
+  return lines.map(line => {
+    const tab = line.indexOf('\t');
+    const hash = tab === -1 ? line : line.slice(0, tab);
+    const subject = tab === -1 ? '' : line.slice(tab + 1);
+    return { hash, subject, ...(slug ? { url: `https://github.com/${slug}/commit/${hash}` } : {}) };
+  });
+}
 export const formatDuration = s => (s < 90 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`);
 export const slugify = t => (String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)) || 'informe';
 
@@ -39,13 +67,15 @@ export function resolveStyle(config, name, { marker } = {}) {
   throw new Error(`estilo '${name}' no existe; disponibles: ${listStyles(config, { marker }).join(', ') || '(ninguno)'}`);
 }
 
-export function buildReportData(jm, ids, { title = 'Informe de Colmena', subtitle } = {}) {
+export function buildReportData(jm, ids, { title = 'Informe de Colmena', subtitle, git } = {}) {
   const jobs = ids.map(id => {
     const m = jm.meta(id);
     if (!TERMINAL.has(m.state)) throw new Error(`job ${id} sigue ${m.state}; espera a que termine antes de generar el reporte`);
     const r = jm.result(id, { detail: 'normal' });
     const { durationS, costUsd } = jobMetrics(m);
-    return { id, worker: m.worker, task: m.task, state: m.state, report: r.report ?? null, text: r.text ?? null, files: m.files ?? [], diffstat: m.diffstat ?? '', cost_usd: costUsd, durationS, branch: m.branch ?? null, error: m.error ?? null };
+    const job = { id, worker: m.worker, task: m.task, state: m.state, report: r.report ?? null, text: r.text ?? null, files: m.files ?? [], diffstat: m.diffstat ?? '', cost_usd: costUsd, durationS, branch: m.branch ?? null, error: m.error ?? null };
+    if (git && job.branch) job.commits = jobCommits({ cwd: m.cwd, branch: job.branch, base: m.base }, { git });
+    return job;
   });
   const done = jobs.filter(j => j.state === 'done').length;
   const failed = jobs.filter(j => j.state === 'failed' || j.state === 'orphaned').length;
@@ -53,6 +83,17 @@ export function buildReportData(jm, ids, { title = 'Informe de Colmena', subtitl
     title, subtitle: subtitle ?? `${done} de ${jobs.length} tareas terminaron correctamente`, generatedAt: new Date().toISOString(), jobs,
     totals: { jobs: jobs.length, done, failed, cancelled: jobs.filter(j => j.state === 'cancelled').length, costUsd: jobs.reduce((s, j) => s + j.cost_usd, 0), durationS: jobs.reduce((s, j) => s + j.durationS, 0) },
   };
+}
+
+function commitsSection(commits) {
+  if (!commits?.length) return '';
+  const items = commits.map(c => `<li>${c.url ? `<a href="${escapeHtml(c.url)}">${escapeHtml(c.hash)}</a>` : `<code>${escapeHtml(c.hash)}</code>`} ${escapeHtml(c.subject)}</li>`).join('');
+  return `<section class="commits"><h4>Commits</h4><ul>${items}</ul></section>`;
+}
+
+function notesSection(notes) {
+  const text = notesText(notes);
+  return text ? `<section class="notes">\n<h2 class="hand">Decisiones del orquestador</h2>\n<p>${para(text)}</p>\n</section>` : '';
 }
 
 function card(j) {
@@ -66,7 +107,7 @@ function card(j) {
   <span class="washi"></span>
   <header><h3>${escapeHtml(String(j.task).slice(0, 90))}</h3><span class="stamp ${stamp}">${escapeHtml(j.state)}</span></header>
   <p class="meta"><span class="chip">${escapeHtml(j.worker)}</span><span class="chip">${formatDuration(j.durationS)}</span><span class="chip">$${j.cost_usd.toFixed(2)}</span>${j.branch ? `<span class="chip">rama ${escapeHtml(j.branch)}</span>` : ''}</p>
-  ${body}
+  ${body}${commitsSection(j.commits)}
 </article>`;
 }
 
@@ -77,7 +118,9 @@ export function renderFallback(data, styleDir) {
     jobs: data.totals.jobs, done: data.totals.done, failed: data.totals.failed + data.totals.cancelled,
     cost: data.totals.costUsd.toFixed(2), duration: formatDuration(data.totals.durationS),
   };
-  return tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => String(vals[k] ?? '')).replace('<!--COLMENA:CARDS-->', data.jobs.map(card).join('\n'));
+  return tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => String(vals[k] ?? ''))
+    .replace('<!--COLMENA:NOTES-->', notesSection(data.notes))
+    .replace('<!--COLMENA:CARDS-->', data.jobs.map(card).join('\n'));
 }
 
 function reporterPrompt(styleDir, dir) {
@@ -118,11 +161,11 @@ export function pruneReportDirs(config, { olderThanDays } = {}) {
   return removed;
 }
 
-export async function generateReport({ jm, config, ids, style, title, subtitle, open = false, atomicWriteDependencies } = {}) {
+export async function generateReport({ jm, config, ids, style, title, subtitle, notes, git = gitText, open = false, atomicWriteDependencies } = {}) {
   if (!ids?.length) throw new Error('indica al menos un job_id');
   const styleName = style ?? config.settings.plugins.report.default_style;
   const styleDir = resolveStyle(config, styleName, { marker: '<!--COLMENA:CARDS-->' });
-  const data = buildReportData(jm, ids, { title: title || undefined, subtitle });
+  const data = { ...buildReportData(jm, ids, { title: title || undefined, subtitle, git }), notes: notesText(notes) };
 
   const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 12);
   let dir = path.join(config.reportsDir, `${stamp}-${slugify(data.title)}`);

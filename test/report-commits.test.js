@@ -35,6 +35,17 @@ function fallbackData(over = {}) {
   };
 }
 
+test('buildReportData sin git no añade commits (los decks de present no cambian)', async () => {
+  const config = getConfig(baseEnv(codexOnlyHome()));
+  const jm = createJobManager(config);
+  const r0 = repo();
+  const id = jm.submit({ task: 'EDIT', cwd: r0, isolation: 'worktree' });
+  await jm.wait([id]);
+  const data = buildReportData(jm, [id]);
+  assert.equal(data.jobs[0].branch, `colmena/${id}`);
+  assert.ok(!('commits' in data.jobs[0]));
+});
+
 test('githubRepoSlug reconoce remotos GitHub y descarta el resto', () => {
   assert.equal(githubRepoSlug('https://github.com/acme/repo.git'), 'acme/repo');
   assert.equal(githubRepoSlug('https://github.com/acme/repo'), 'acme/repo');

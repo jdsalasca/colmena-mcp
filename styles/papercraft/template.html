@@ -76,6 +76,16 @@
   .card h4 { margin: 0 0 2px; font-size: .8rem; text-transform: uppercase; letter-spacing: .1em; color: var(--ink-soft); font-family: 'Segoe Print', 'Bradley Hand', cursive; }
   .card section p { margin: 0; overflow-wrap: anywhere; }
   .card .risks { border-left: 4px solid var(--coral); padding-left: 10px; }
+  .card .commits ul { margin: 4px 0 0; padding: 0; list-style: none; }
+  .card .commits li { font-size: .9rem; overflow-wrap: anywhere; }
+  .card .commits code { font-family: 'Courier New', monospace; font-size: .85em; }
+  .card .commits a { color: var(--ink); text-decoration-color: var(--kraft-dark); font-family: 'Courier New', monospace; }
+
+  /* Orchestrator decisions: a stitched note pinned before the cards */
+  .notes { background: var(--cream-2); border-radius: 6px; padding: 22px 26px; margin: 0 0 44px; transform: rotate(.4deg);
+    box-shadow: 0 1px 0 rgba(255,255,255,.35) inset, 5px 6px 0 var(--lilac), 0 12px 18px -8px var(--shadow); }
+  .notes h2 { margin: 0 0 6px; font-size: 1.3rem; }
+  .notes p { margin: 0; color: var(--ink-soft); overflow-wrap: anywhere; }
   footer { text-align: center; margin-top: 56px; color: var(--ink-soft); font-size: .9rem; }
   @keyframes drop { from { opacity: 0; translate: 0 -14px; } to { opacity: 1; translate: 0 0; } }
   @media (prefers-reduced-motion: reduce) { .card { animation: none; } }
@@ -96,6 +106,7 @@
       <li><b>{{duration}}</b> de trabajo</li>
     </ul>
   </header>
+  <!--COLMENA:NOTES-->
   <main class="grid">
 <!--COLMENA:CARDS-->
   </main>
