@@ -39,6 +39,7 @@ const Defaults = z.object({
   stall_timeout_min: z.number().nonnegative().default(15),
   cancel_jobs_on_shutdown: z.boolean().default(false),
   reserve_usd: z.number().nonnegative().default(0),
+  requires: z.array(z.string().min(1)).default([]),
 });
 const Preferences = z.object({ provider: z.enum(['auto', 'codex', 'opencode']).default('auto'), profile: z.string().min(1).optional() });
 const Notify = z.object({
@@ -55,6 +56,7 @@ const Standards = z.object({ enabled: z.boolean().default(true), preamble: z.str
 const Worktree = z.object({
   setup: z.string().min(1).optional(),
   setup_timeout_min: z.number().positive().default(10),
+  requires: z.array(z.string().min(1)).default([]),
 });
 const Providers = z.object({
   opencode: z.object({ isolate_config: z.boolean().default(true), config_dir: z.string().min(1).optional() }),
@@ -69,7 +71,7 @@ export const DEFAULT_SETTINGS = {
     'max-hive': { provider: 'opencode', model: 'opencode-go/muse-spark-1.3-contributor', effort: 'high', priority: 9, strengths: ['bulk'], budget: { monthly_usd: 5 } },
   },
   roles: { reporter: 'ds-flash', summarizer: 'ds-flash', reviewer: 'luna-max', presenter: 'luna-max' },
-  defaults: { worker: 'luna-max', max_parallel: 4, timeout_min: 60, exit_grace_s: 20, retry_transient: 1, wait_max_s: 600, stall_timeout_min: 15, cancel_jobs_on_shutdown: false, reserve_usd: 0 },
+  defaults: { worker: 'luna-max', max_parallel: 4, timeout_min: 60, exit_grace_s: 20, retry_transient: 1, wait_max_s: 600, stall_timeout_min: 15, cancel_jobs_on_shutdown: false, reserve_usd: 0, requires: [] },
   preferences: { provider: 'auto' },
   profiles: {},
   plugins: { notify: {}, report: {}, present: {}, improve: {}, widget: {} },
