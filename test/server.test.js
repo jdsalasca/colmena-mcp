@@ -817,6 +817,56 @@ test('MC-3: wait valida timeout_s entre 1 y 1800 sin cancelar al vencer', async 
     await call('cancel', { job_id: slow.job_id });
   } finally { await client.close(); }
 });
+test('MEJORA-B: continue devuelve parent_id y avisa; wait/result/status con el id viejo dan el nuevo reporte', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    const first = await call('run', { task: 'uno', cwd: tmp('luna-mjb-'), isolation: 'inplace', wait: true });
+    assert.equal(first.state, 'done');
+    const cont = await call('continue', { job_id: first.id, message: 'sigue' });
+    assert.equal(cont.parent_id, first.id);
+    assert.ok(cont.job_id && cont.job_id !== first.id);
+    assert.equal(cont.note, `espera a ${cont.job_id}`);
+
+    const waited = await call('wait', { job_id: first.id, timeout_s: 60 });
+    assert.equal(waited.pending.length, 0);
+    assert.equal(waited.done.length, 1);
+    assert.equal(waited.done[0].id, cont.job_id);
+    assert.deepEqual(waited.done[0].followed, { from: first.id, to: cont.job_id });
+
+    const result = await call('result', { job_id: first.id });
+    assert.equal(result.id, cont.job_id);
+    assert.deepEqual(result.followed, { from: first.id, to: cont.job_id });
+    const status = await call('status', { job_id: first.id });
+    assert.equal(status.id, cont.job_id);
+    assert.deepEqual(status.followed, { from: first.id, to: cont.job_id });
+  } finally { await client.close(); }
+});
+test('MEJORA-B: wait/report/present aceptan job_id suelto, ids con comas y fallan claro sin ninguno', async () => {
+  const home = codexOnlyHome();
+  const { client, call } = await connect({ COLMENA_HOME: home });
+  try {
+    const a = await call('run', { task: 'hola a', cwd: tmp('luna-mjb-a-'), isolation: 'inplace', wait: true });
+    const b = await call('run', { task: 'hola b', cwd: tmp('luna-mjb-b-'), isolation: 'inplace', wait: true });
+
+    assert.match((await call('wait', {})).error, /job_id/i);
+    const both = await call('wait', { job_id: `${a.id}, ${b.id}`, timeout_s: 60 });
+    assert.equal(both.done.length, 2);
+    const single = await call('wait', { job_id: a.id, timeout_s: 60 });
+    assert.equal(single.done.length, 1);
+    assert.equal(single.done[0].id, a.id);
+
+    assert.match((await call('report', {})).error, /job_id/i);
+    const rep = await call('report', { job_id: `${a.id},${b.id}`, title: 'Ronda comas' });
+    assert.equal(rep.usedFallback, false);
+    assert.ok(fs.existsSync(rep.path));
+
+    assert.match((await call('present', {})).error, /job_id/i);
+    const deck = await call('present', { job_id: a.id, title: 'Deck suelto' });
+    assert.equal(deck.usedFallback, false);
+    assert.ok(fs.existsSync(deck.path));
+  } finally { await client.close(); }
+});
 test('MC-4: retry MCP relanza un job fallido con su brief y rechaza los vivos', async () => {
   const home = codexOnlyHome();
   const log = path.join(tmp('luna-retry-mcp-'), 'fake.log');

@@ -213,6 +213,61 @@ test('continueJob resumes saved session in same workdir', async () => {
     assert.equal(jm.result(id2).state, 'done');
   } finally { delete process.env.FAKE_LOG; }
 });
+test('MEJORA-B: continue deja parentId en el nuevo job y continuedBy en el viejo', async () => {
+  const { jm } = mk();
+  const id = jm.submit(S('uno')); await jm.wait([id]);
+  const id2 = jm.continueJob(id, 'sigue');
+  assert.equal(jm.meta(id2).parentId, id);
+  assert.equal(jm.meta(id).continuedBy, id2);
+  await jm.wait([id2]);
+});
+test('MEJORA-B: continuedBy pasa a lista cuando el mismo job se continúa varias veces', async () => {
+  const { jm } = mk();
+  const id = jm.submit(S('uno')); await jm.wait([id]);
+  const a = jm.continueJob(id, 'sigue a'); await jm.wait([a]);
+  const b = jm.continueJob(id, 'sigue b');
+  assert.deepEqual(jm.meta(id).continuedBy, [a, b]);
+  await jm.wait([b]);
+});
+test('MEJORA-B: wait/result/status con un id viejo siguen la cadena de 2 continuaciones', async () => {
+  const { jm } = mk();
+  const id1 = jm.submit(S('uno')); await jm.wait([id1]);
+  const id2 = jm.continueJob(id1, 'sigue'); await jm.wait([id2]);
+  const id3 = jm.continueJob(id2, 'sigue más'); await jm.wait([id3]);
+
+  const st = jm.status(id1);
+  assert.equal(st.id, id3);
+  assert.equal(st.state, 'done');
+  assert.deepEqual(st.followed, { from: id1, to: id3 });
+
+  const res = jm.result(id1);
+  assert.equal(res.id, id3);
+  assert.match(res.report.RESULT, /^ok/);
+  assert.deepEqual(res.followed, { from: id1, to: id3 });
+
+  const w = await jm.wait([id1]);
+  assert.equal(w.pending.length, 0);
+  assert.equal(w.done.length, 1);
+  assert.equal(w.done[0].id, id3);
+  assert.deepEqual(w.done[0].followed, { from: id1, to: id3 });
+});
+test('MEJORA-B: wait con un id viejo espera al descendiente vivo, no al reporte obsoleto', async () => {
+  const { jm } = mk();
+  const id1 = jm.submit(S('uno')); await jm.wait([id1]);
+  const id2 = jm.continueJob(id1, 'SLEEP continúa');
+  try {
+    const w = await jm.wait([id1], { timeoutS: 1 });
+    assert.equal(w.done.length, 0);
+    assert.equal(w.pending.length, 1);
+    assert.equal(w.pending[0].id, id2);
+    assert.ok(['queued', 'running'].includes(w.pending[0].state));
+    assert.deepEqual(w.pending[0].followed, { from: id1, to: id2 });
+  } finally {
+    await jm.cancel(id2); await jm.wait([id2], { timeoutS: 20 });
+  }
+  assert.equal(jm.result(id1).state, 'cancelled');
+  assert.equal(jm.result(id1).id, id2);
+});
 test('reload uses the new worker model for subsequent runs', async () => {
   const log = path.join(tmp('luna-reload-'), 'fake.log'); process.env.FAKE_LOG = log;
   try {

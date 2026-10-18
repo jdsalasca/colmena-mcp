@@ -27,6 +27,18 @@ const detailEnum = z.enum(['min', 'normal', 'full']).optional().describe('min (d
 const timeoutSShape = z.number().min(1).max(1800).optional()
   .describe('segundos de espera (1 a 1800; se recorta al máximo configurado defaults.wait_max_s, defecto 600)');
 
+const jobIdsInput = {
+  job_id: z.string().optional().describe('Alternativa a job_ids: un id o varios separados por coma'),
+  job_ids: z.array(z.string()).optional().describe('Array de ids; alternativa a job_id'),
+};
+
+const parseJobIds = a => {
+  const raw = [...(a.job_ids ?? []), ...(a.job_id != null ? [a.job_id] : [])];
+  const ids = [...new Set(raw.flatMap(value => String(value).split(',')).map(s => s.trim()).filter(Boolean))];
+  if (!ids.length) throw new Error('indica job_id (uno o varios separados por coma) o job_ids (array con al menos un id)');
+  return ids;
+};
+
 const changedFields = (before = {}, after = {}, prefix = '') => [...new Set([...Object.keys(before), ...Object.keys(after)])]
   .flatMap(key => {
     const oldValue = before[key]; const nextValue = after[key];
@@ -180,19 +192,19 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
       return { ...preferenceResult(selection), ...(save_profile ? { saved_profile: save_profile.name } : {}) };
     });
 
-  const reportTool = tool('report', 'Genera un reporte HTML bonito de lo logrado por los jobs indicados (ronda final). El worker del rol reporter lo redacta con el estilo elegido (defecto papercraft); si falla, se usa un renderizador de respaldo. Incluye los commits de cada rama (enlazados si origin es GitHub) y las notas del orquestador. Devuelve la ruta del HTML.',
-    { job_ids: z.array(z.string()).min(1), style: z.string().optional().describe('Nombre de estilo (carpeta styles/<nombre>); defecto: plugins.report.default_style'), title: z.string().optional(), subtitle: z.string().optional(), notes: NotesSchema, open: z.boolean().optional().describe('Abrir en el navegador al terminar') },
-    a => generateReport({ jm, config, ids: a.job_ids, style: a.style, title: a.title, subtitle: a.subtitle, notes: a.notes, open: a.open, atomicWriteDependencies }));
+  const reportTool = tool('report', 'Genera un reporte HTML bonito de lo logrado por los jobs indicados (ronda final; acepta job_ids array o job_id suelto/con comas). El worker del rol reporter lo redacta con el estilo elegido (defecto papercraft); si falla, se usa un renderizador de respaldo. Incluye los commits de cada rama (enlazados si origin es GitHub) y las notas del orquestador. Devuelve la ruta del HTML.',
+    { ...jobIdsInput, style: z.string().optional().describe('Nombre de estilo (carpeta styles/<nombre>); defecto: plugins.report.default_style'), title: z.string().optional(), subtitle: z.string().optional(), notes: NotesSchema, open: z.boolean().optional().describe('Abrir en el navegador al terminar') },
+    a => generateReport({ jm, config, ids: parseJobIds(a), style: a.style, title: a.title, subtitle: a.subtitle, notes: a.notes, open: a.open, atomicWriteDependencies }));
   if (!config.settings.plugins.report.enabled) reportTool.disable();
 
-  const presentTool = tool('present', 'Genera una presentación HTML autocontenida en estilo papercraft para cerrar un hito; el rol presenter la redacta y, si falla, se crea un respaldo determinista.',
+  const presentTool = tool('present', 'Genera una presentación HTML autocontenida en estilo papercraft para cerrar un hito (acepta job_ids array o job_id suelto/con comas); el rol presenter la redacta y, si falla, se crea un respaldo determinista.',
     {
-      job_ids: z.array(z.string()).min(1), title: z.string().optional(), subtitle: z.string().optional(),
+      ...jobIdsInput, title: z.string().optional(), subtitle: z.string().optional(),
       notes: NotesSchema,
       style: z.string().optional().describe('Nombre de estilo (carpeta styles/<nombre>); defecto: plugins.present.default_style'),
       open: z.boolean().optional().describe('Abrir en el navegador al terminar'),
     },
-    a => generatePresentation({ jm, config, ids: a.job_ids, title: a.title, subtitle: a.subtitle, notes: a.notes, style: a.style, open: a.open, atomicWriteDependencies }));
+    a => generatePresentation({ jm, config, ids: parseJobIds(a), title: a.title, subtitle: a.subtitle, notes: a.notes, style: a.style, open: a.open, atomicWriteDependencies }));
   if (!config.settings.plugins.present.enabled) presentTool.disable();
 
   const improveTool = tool('improve', 'Mejora continua: un agente analiza el repo en un worktree y escribe docs/backlog/<fecha>-<focus>.md con ítems priorizados (impacto, esfuerzo, riesgo) y briefs listos para delegar con TDD y DRY.',
@@ -250,7 +262,7 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
     { ...taskShape, from: z.array(z.string()).min(1) },
     async a => ({ job_id: jm.submit(toSpec({ ...a, handoff_from: [...(a.handoff_from ?? []), ...a.from] })) }));
 
-  tool('status', 'Estado de un job.', { job_id: z.string() }, a => jm.status(a.job_id));
+  tool('status', 'Estado de un job; con un id viejo reanudado con continue sigue la cadena hasta el último descendiente y añade followed:{from,to}.', { job_id: z.string() }, a => jm.status(a.job_id));
   tool('list', 'Lista jobs recientes.', { state: z.string().optional(), limit: z.number().optional() }, a => jm.list({ state: a.state, limit: a.limit ?? 15 }));
   tool('stats', 'Resume el uso de colmena por worker, tipo de job, estado, duración, costo, tokens y fallos.',
     { since_days: z.number().nonnegative().optional().default(30).describe('Ventana histórica en días; defecto: 30') },
@@ -266,14 +278,15 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
     return `todos terminaron: sin improve en las últimas 24 h para ${cwd}; considera \`improve\` (${PENDING_FOCUSES.join(', ')})`;
   };
 
-  tool('wait', 'Espera a uno o todos los jobs (máx configurable defaults.wait_max_s, defecto 600 s, tope 1800 s) y devuelve reportes compactos; al vencer devuelve pending con estado y progreso sin cancelar; si la ronda terminó, añade un hint de mejora continua.',
-    { job_ids: z.array(z.string()).min(1), timeout_s: timeoutSShape, mode: z.enum(['any', 'all']).optional() },
+  tool('wait', 'Espera a uno o todos los jobs (máx configurable defaults.wait_max_s, defecto 600 s, tope 1800 s) y devuelve reportes compactos; acepta job_ids (array) o job_id (uno o varios separados por coma); con un id viejo continúa la cadena hasta el último descendiente y lo sustituye en done/pending con followed:{from,to}; al vencer devuelve pending con estado y progreso sin cancelar; si la ronda terminó, añade un hint de mejora continua.',
+    { ...jobIdsInput, timeout_s: timeoutSShape, mode: z.enum(['any', 'all']).optional() },
     async a => {
-      const w = await jm.wait(a.job_ids, { mode: a.mode ?? 'all', timeoutS: a.timeout_s ?? 120 });
-      const hint = w.pending.length ? undefined : improveHint(a.job_ids[0]);
+      const ids = parseJobIds(a);
+      const w = await jm.wait(ids, { mode: a.mode ?? 'all', timeoutS: a.timeout_s ?? 120 });
+      const hint = w.pending.length ? undefined : improveHint(ids[0]);
       return hint ? { ...w, hint } : w;
     });
-  tool('result', 'Reporte compacto (RESULT/FILES/TESTS/RISKS), archivos tocados y rama.', { job_id: z.string(), detail: detailEnum }, a => jm.result(a.job_id, { detail: a.detail ?? 'min' }));
+  tool('result', 'Reporte compacto (RESULT/FILES/TESTS/RISKS), archivos tocados y rama; con un id viejo reanudado con continue sigue la cadena hasta el último descendiente y añade followed:{from,to}.', { job_id: z.string(), detail: detailEnum }, a => jm.result(a.job_id, { detail: a.detail ?? 'min' }));
 
   tool('diff', 'Diff del trabajo (truncado; el completo queda en disco).', { job_id: z.string(), max_chars: z.number().optional() }, a => {
     const m = jm.meta(a.job_id);
@@ -285,7 +298,12 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
     return out;
   });
 
-  tool('continue', 'Reanuda la sesión de un agente con un mensaje de seguimiento (mismo workdir).', { job_id: z.string(), message: z.string().min(1) }, a => ({ job_id: jm.continueJob(a.job_id, a.message) }));
+  tool('continue', 'Reanuda la sesión de un agente con un mensaje de seguimiento (mismo workdir). Crea un job nuevo con parentId y deja continuedBy en el viejo; espera al id nuevo (wait/result/status sobre el id viejo siguen la cadena).',
+    { job_id: z.string(), message: z.string().min(1) },
+    a => {
+      const id = jm.continueJob(a.job_id, a.message);
+      return { job_id: id, parent_id: a.job_id, note: `espera a ${id}` };
+    });
   tool('retry', 'Relanza un job terminal con su brief original completo (brief.md) o con task nuevo; conserva cwd y workspace, usa worker explícito o sustituye uno retirado por router, y guarda parentId.',
     {
       job_id: z.string(),
