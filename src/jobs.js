@@ -12,6 +12,7 @@ import { createLedger } from './ledger.js';
 import { chooseWorker, workerStatus, reserveUsdOf } from './router.js';
 import { buildPrompt, parseReport } from './report.js';
 import * as iso from './isolation.js';
+import { checkRequirements, spawnExec } from './preflight.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { TERMINAL, VERDICTS } from './job-states.js';
 
@@ -44,7 +45,7 @@ function runSetup({ workdir, setup, timeoutMin, logPath, onSpawn }) {
 
 export function createJobManager(config, {
   bus = new EventEmitter(), writeArtifact = writeFileAtomic, snapshot = processSnapshot,
-  now = Date.now, treeIntervalMs = TREE_SNAPSHOT_MS,
+  now = Date.now, treeIntervalMs = TREE_SNAPSHOT_MS, preflightExec = spawnExec,
 } = {}) {
   const store = createStore(config);
   const ledger = createLedger(config);
@@ -111,6 +112,44 @@ export function createJobManager(config, {
     try { ledger.release(id); } catch { /* bookkeeping must never break a job */ }
   };
 
+  // El preflight corre como primer paso asíncrono del job (submit sigue siendo síncrono): hasta que no
+  // pasa no se reserva presupuesto ni se lanza nada. Si falla, el job queda `failed` al momento con
+  // error `preflight: …` y los hints accionables, sin gastar cuota.
+  const failPreflight = (meta, result) => {
+    const failed = result.failed ?? [];
+    const hints = [...new Set(failed.map(f => f.hint).filter(Boolean))];
+    const error = `preflight: ${failed.map(f => `${f.name}: ${f.reason}`).join('; ') || 'requisitos incumplidos'}`.slice(0, 1500);
+    const qi = queue.findIndex(q => q.id === meta.id);
+    if (qi >= 0) queue.splice(qi, 1);
+    const updated = store.update(meta.id, { state: 'failed', endedAt: Date.now(), error, phase: null, ...(hints.length ? { hints } : {}) });
+    releaseBudget(meta.id);
+    fs.rmSync(path.join(store.jobDir(meta.id), 'prompt.txt'), { force: true });
+    emitFinished(meta, { ...updated, costUsd: 0, usage: {} });
+    finished.get(meta.id)?.resolve();
+  };
+
+  const runPreflight = async entry => {
+    const meta = store.get(entry.id);
+    if (!meta || meta.state !== 'queued') return;
+    store.update(entry.id, { phase: 'preflight' });
+    let result;
+    try { result = await checkRequirements(entry.requires, { cwd: meta.workdir ?? meta.cwd, exec: preflightExec }); }
+    catch (error) { result = { ok: false, failed: [{ name: 'preflight', reason: error.message, hint: 'revisa los requires del job' }] }; }
+    const current = store.get(entry.id);
+    if (!current || current.state !== 'queued') return;
+    if (!result.ok) { failPreflight(current, result); return; }
+    reserveBudget(entry.id, entry.worker.name, entry.reservedUsd);
+    entry.ready = true;
+    store.update(entry.id, { phase: null });
+    pump();
+  };
+
+  const enqueue = (entry, { pumpNow = true } = {}) => {
+    queue.push(entry);
+    if (!entry.ready) runPreflight(entry).catch(() => {});
+    else if (pumpNow) pump();
+  };
+
   function summaryText(id) {
     need(id);
     const t = readFile(path.join(store.jobDir(id), 'summary.md')) ?? lastMessage(id);
@@ -127,33 +166,42 @@ export function createJobManager(config, {
     const id = store.newId();
     const ws = spec.workspace ?? iso.prepare(config, { cwd, isolation: spec.isolation ?? 'inplace', id });
     const kind = spec.kind ?? 'run';
+    const isolation = spec.workspace ? 'reuse' : (spec.isolation ?? 'inplace');
+    const requires = spec.requires ?? [
+      ...(config.settings.defaults.requires ?? []),
+      ...(isolation === 'worktree' ? config.settings.worktree.requires ?? [] : []),
+    ];
     const prompt = spec.rawPrompt ?? buildPrompt({
       task: spec.task, contextFiles: spec.contextFiles, handoff: handoffTexts, kind, standards: config.settings.standards, branch: ws.branch,
     });
     const reservedUsd = reservableAmount(worker);
     store.create({
       id, state: 'queued', kind, task: String(spec.task).slice(0, 300), cwd,
-      isolation: spec.workspace ? 'reuse' : (spec.isolation ?? 'inplace'),
+      isolation,
       workdir: ws.workdir, branch: ws.branch, base: ws.base, readonly: ws.readonly, warning: ws.warning,
       parentId: spec.parentId, resumeSessionId: spec.resumeSessionId, ephemeral: !!spec.ephemeral,
       worker: worker.name, provider: worker.provider, model: worker.model, effort: worker.effort ?? null,
       note: [selection.note, spec.note].filter(Boolean).join('; ') || undefined,
       workerConfig: { ...worker }, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS, stallMin: config.stallTimeoutMin,
+      ...(requires.length ? { requires } : {}),
       ...(reservedUsd > 0 ? { reservedUsd } : {}),
       owner: process.pid, createdAt: Date.now(),
     });
-    reserveBudget(id, worker.name, reservedUsd);
+    if (!requires.length) reserveBudget(id, worker.name, reservedUsd);
     persistText(path.join(store.jobDir(id), 'prompt.txt'), prompt);
     persistText(path.join(store.jobDir(id), 'brief.md'), prompt);
     store.audit({ id, kind, worker: worker.name, cwd, isolation: spec.isolation, briefHash: crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 12) });
     ensureFinished(id);
-    queue.push({ id, prompt, worker, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS, stallMin: config.stallTimeoutMin });
-    pump();
+    enqueue({ id, prompt, worker, timeoutMin: config.timeoutMin, exitGraceS: config.exitGraceS, stallMin: config.stallTimeoutMin, ready: requires.length === 0, requires, reservedUsd });
     return id;
   }
 
   function pump() {
-    while (live.size < config.maxParallel && queue.length) start(queue.shift());
+    while (live.size < config.maxParallel) {
+      const next = queue.findIndex(entry => entry.ready);
+      if (next < 0) break;
+      start(queue.splice(next, 1)[0]);
+    }
     maxSeen = Math.max(maxSeen, live.size);
   }
 
@@ -544,6 +592,7 @@ export function createJobManager(config, {
     out.workdir = m.workdir;
     if (m.warning) out.warning = m.warning;
     if (m.error) out.error = m.error;
+    if (m.hints?.length) out.hints = m.hints;
     if (detail !== 'min') {
       Object.assign(out, { sessionId: m.sessionId, usage: m.usage, jobDir: store.jobDir(id), eventsLog: path.join(store.jobDir(id), 'events.jsonl') });
       if (m.files?.length > 15) out.files = m.files;
@@ -708,7 +757,8 @@ export function createJobManager(config, {
         });
         restoreReservation();
         ensureFinished(m.id);
-        queue.push({ id: m.id, prompt: savedPrompt, worker, timeoutMin: m.timeoutMin ?? config.timeoutMin, exitGraceS: m.exitGraceS ?? config.exitGraceS, stallMin: m.stallMin ?? config.stallTimeoutMin });
+        const requires = m.requires ?? [];
+        enqueue({ id: m.id, prompt: savedPrompt, worker, timeoutMin: m.timeoutMin ?? config.timeoutMin, exitGraceS: m.exitGraceS ?? config.exitGraceS, stallMin: m.stallMin ?? config.stallTimeoutMin, ready: requires.length === 0, requires, reservedUsd: m.reservedUsd ?? 0 }, { pumpNow: false });
         continue;
       }
       let adapter;

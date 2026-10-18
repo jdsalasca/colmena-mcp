@@ -73,6 +73,9 @@ defaults:
   wait_max_s: 600   # tope de cada espera wait/run (1 a 1800 s); sube hasta 1800 para jobs largos
   cancel_jobs_on_shutdown: false  # true cancela jobs queued/running al cerrar el servidor MCP; false los deja trabajar y la próxima instancia los adopta
   reserve_usd: 0    # reserva global estimada por job concurrente (0 la desactiva); workers.<alias>.reserve_usd la sobreescribe
+  # requires: [docker]  # preflight de TODOS los jobs: binarios ('docker' prueba `docker info`, 'node'/'git'/... usan --version),
+  #                     # 'port:5432' o 'url:http://localhost:3000'; si falla, el job queda failed al momento (error 'preflight'
+  #                     # + hints en result) sin lanzar agente ni reservar presupuesto. Un requires explícito en run lo anula.
 
 plugins:
   notify:
@@ -101,6 +104,7 @@ standards:
 worktree:
   # setup: npm ci --no-audit --no-fund  # opcional: comando ejecutado en el worktree ANTES de lanzar al agente
   # setup_timeout_min: 10               # timeout del setup en minutos (defecto 10)
+  # requires: [docker]                  # opcional: preflight solo para jobs worktree; se SUMA a defaults.requires
   # Si el setup falla o expira, el job termina failed con "setup falló: …" y el agente nunca arranca.
   # No aplica a inplace/readonly. reload_config lo recoge y su diff lo incluye.
 
