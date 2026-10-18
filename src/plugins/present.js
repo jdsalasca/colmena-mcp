@@ -2,18 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { buildReportData, escapeHtml, formatDuration, resolveStyle, slugify } from './report.js';
+import { notesText } from './notes.js';
 import { writeFileAtomic } from '../atomic-write.js';
 
 const PRESENTATION_MIN_BYTES = 600;
 const PRESENTATION_MAX_BYTES = 2_000_000;
 
 const paragraphs = value => escapeHtml(value).replace(/\r?\n/g, '<br>');
-
-function notesText(notes) {
-  if (typeof notes === 'string') return notes.trim() || 'No se incluyeron notas del orquestador.';
-  if (notes == null) return 'No se incluyeron notas del orquestador.';
-  return JSON.stringify(notes, null, 2);
-}
 
 function slideStart(page, label) {
   return `<section class="slide" aria-label="${escapeHtml(label)}" data-page="${page}">\n<div class="paper-stack"><article class="paper">\n<span class="washi" aria-hidden="true"></span>\n`;
@@ -52,7 +47,7 @@ ${slideEnd()}`;
 
 function renderFallback(data, styleDir) {
   const template = fs.readFileSync(path.join(styleDir, 'template.html'), 'utf8');
-  const notes = notesText(data.notes);
+  const notes = notesText(data.notes, 'No se incluyeron notas del orquestador.');
   const slides = [
     `${slideStart(1, 'Portada')}
 <p class="eyebrow">Cierre de hito · Colmena</p><h1 class="hand">${escapeHtml(data.title)}</h1><p class="subtitle">${escapeHtml(data.subtitle)}</p>
