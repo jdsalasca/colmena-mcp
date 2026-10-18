@@ -11,7 +11,7 @@ const dir = val('--dir') || process.cwd();
 const session = val('-s') || 'ses_' + Math.random().toString(16).slice(2, 8);
 const agent = val('--agent');
 if (process.env.FAKE_LOG) {
-  fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ argv, dir, prompt, xdgConfigHome: process.env.XDG_CONFIG_HOME }) + '\n');
+  fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ argv, dir, prompt, xdgConfigHome: process.env.XDG_CONFIG_HOME, disableClaudeSkills: process.env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS }) + '\n');
 }
 
 const emit = o => process.stdout.write(JSON.stringify(o) + '\n');

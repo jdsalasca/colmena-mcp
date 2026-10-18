@@ -1,8 +1,11 @@
-// Fake codex CLI for tests. Honors -C, -o, `resume <id>`; prompt keywords SLEEP / FAIL / EDIT.
+// Fake codex CLI for tests. Honors -C, -o, `resume <id>`; prompt keywords SLEEP / FAIL / EDIT,
+// plus git misbehavior: SWITCH (checkout -B work + commit), WIPE (commit then restore base content),
+// DIRTY (untracked file), DIRTY21 (21 untracked files).
 // Contract-error knobs (no network): FAKE_NO_FINAL omits the turn.completed final signal;
 // FAKE_EXPOSE_MODEL=<id> makes the provider expose a model id in its events.
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const argv = process.argv.slice(2);
 const val = f => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : undefined; };
@@ -34,7 +37,28 @@ if (prompt.includes('SLEEP')) setTimeout(() => {}, 600000);
 else if (prompt.includes('FAIL')) { process.stderr.write('boom: fake failure\n'); process.exit(1); }
 else setTimeout(() => {
   let files = 'ninguno';
+  const makeCommit = () => {
+    execFileSync('git', ['add', '-A'], { cwd });
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'fake work'], { cwd });
+    files = 'edited.txt';
+  };
   if (prompt.includes('EDIT')) { fs.writeFileSync(path.join(cwd, 'edited.txt'), 'hola\n'); files = 'edited.txt'; }
+  if (prompt.includes('SWITCH')) {
+    execFileSync('git', ['checkout', '-B', 'work'], { cwd });
+    fs.writeFileSync(path.join(cwd, 'edited.txt'), 'hola\n');
+    makeCommit();
+  }
+  if (prompt.includes('WIPE')) {
+    const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim();
+    execFileSync('git', ['checkout', '-B', 'work'], { cwd });
+    fs.writeFileSync(path.join(cwd, 'edited.txt'), 'hola\n');
+    makeCommit();
+    execFileSync('git', ['checkout', base, '--', '.'], { cwd });
+  }
+  if (prompt.includes('DIRTY21')) {
+    for (let i = 1; i <= 21; i++) fs.writeFileSync(path.join(cwd, `dirty-${String(i).padStart(2, '0')}.txt`), 'd\n');
+    files = '21 archivos';
+  } else if (prompt.includes('DIRTY')) { fs.writeFileSync(path.join(cwd, 'edited.txt'), 'hola\n'); files = 'edited.txt'; }
   const text = process.env.FAKE_RAW ? process.env.FAKE_RAW : `RESULT: ok (${session})\nFILES: ${files}\nTESTS: 1/1\nRISKS: ninguno`;
   emit({ type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text } });
   if (!process.env.FAKE_NO_FINAL) emit({ type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 5 }, ...(process.env.FAKE_EXPOSE_MODEL ? { model: process.env.FAKE_EXPOSE_MODEL } : {}) });
