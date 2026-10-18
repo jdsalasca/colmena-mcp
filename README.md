@@ -41,7 +41,7 @@ profiles:
   balanced:
     mix: {luna-max: 1, ds-flash: 1, max-hive: 2} # 1/4, 1/4, 2/4
 roles:    {reporter: ds-flash, summarizer: ds-flash, reviewer: luna-max, presenter: luna-max}
-defaults: {worker: luna-max, max_parallel: 4, timeout_min: 60, exit_grace_s: 20, retry_transient: 1, wait_max_s: 600, stall_timeout_min: 15, cancel_jobs_on_shutdown: false, reserve_usd: 0}
+defaults: {worker: luna-max, max_parallel: 4, timeout_min: 60, exit_grace_s: 20, retry_transient: 1, wait_max_s: 600, stall_timeout_min: 15, cancel_jobs_on_shutdown: false, reserve_usd: 0, requires: []}
 preferences: {provider: auto, profile: balanced} # quita profile para usar solo provider/prioridad
 plugins:
   notify: {enabled: true, on: [start, finish, fail], heartbeat_min: 10, budget_pct: 80}
@@ -56,6 +56,7 @@ standards:
 worktree:
   setup: npm ci --no-audit --no-fund   # opcional: se ejecuta en el worktree ANTES de lanzar al agente (p. ej. instalar dependencias)
   setup_timeout_min: 10                # timeout del setup en minutos (defecto 10)
+  # requires: [docker, "port:5432"]    # opcional: preflight solo para jobs worktree (se suma a defaults.requires)
 providers:
   opencode:
     isolate_config: true
@@ -82,6 +83,7 @@ Notas:
 - `effort` se pasa como `model_reasoning_effort` (Codex) o `--variant` (OpenCode).
 - `providers.opencode.isolate_config` está activo por defecto: OpenCode usa `$COLMENA_HOME/opencode-config` como `XDG_CONFIG_HOME`. Así no hereda los servidores MCP, plugins, agentes, `AGENTS.md` ni skills de la configuración global del usuario; los estándares de Colmena llegan por el preámbulo. La autenticación se conserva en `XDG_DATA_HOME`. Define `config_dir` para usar una configuración mínima propia (la carpeta se crea si falta), o `isolate_config: false` para volver a usar la configuración habitual.
 - `worktree.setup` (opcional) ejecuta un comando en el worktree recién creado **antes** de lanzar al agente — por ejemplo `npm ci --no-audit --no-fund` para instalar dependencias. El job se ve `running` con `phase: 'setup'` durante la ejecución; la salida se guarda en `setup.log` del job. Si el comando falla o excede `setup_timeout_min` (defecto 10), el job termina `failed` con `setup falló: …` y el agente nunca arranca. No aplica a `inplace` ni `readonly`. `reload_config` lo recoge y su diff lo incluye.
+- `requires` (en `run`/`run_many`/`handoff`, o fijo en `defaults.requires` y, solo para jobs `worktree`, `worktree.requires`) es un preflight que corre como primer paso del job, antes de lanzar al agente y de reservar presupuesto: acepta binarios conocidos (`docker` comprueba `docker info` con 8 s de timeout —el CLI puede existir con el daemon apagado—; `node`, `git`, `python`, `java`, `mvn`, `npm`, `cargo`… usan `--version` o equivalente; un nombre desconocido usa `<bin> --version`), `port:5432` (`port:host:5432` opcional) y `url:http://…` (cualquier respuesta HTTP cuenta; solo falla el error de red). Un `requires` explícito en la llamada anula los defaults; `worktree.requires` se suma a `defaults.requires` en jobs con aislamiento `worktree`. Si algo no pasa, el job queda `failed` al momento con `error: "preflight: …"`, `hints` accionables en `result` y sin consumir cuota ni lanzar al agente; el resto de la cola sigue su curso.
 - Evidencia de la comparación reportada para una ejecución trivial: el contexto de entrada bajó de ~47k a ~8k tokens; `opencode-go/deepseek-v4.1-flash` bajó de $0.0074 a $0.0011 por ejecución; y `opencode-go/cat-jam-free`, que fallaba globalmente con `maximum number of items is 128`, respondió con costo reportado `0`. La configuración global también hizo que un job usara `chatgpt-coordinator` durante más de 10 minutos y se observó `ProviderHeaderTimeoutError` en `step-5-preview`.
 - OpenCode informa el costo en USD de cada ejecución. **Codex no**: para contabilizarlo añade `price_per_mtok: {input: …, output: …}` al worker.
 - El saldo real de tus cuentas no se puede consultar por API: el presupuesto es **declarativo + conteo local** (`usage.json`, que además guarda las reservas de los jobs vivos). Dos servidores sobre el mismo `COLMENA_HOME` no pierden actualizaciones: `record`, `reserve`, `release` y `reconcile` se serializan con un lock advisory (`usage.json.lock`) que se recupera solo si es viejo (> 10 s) o su dueño murió. Si el lock no se obtiene en 2 s la mutación se aplica igual (fail-soft): la contabilidad nunca bloquea ni rompe un job.
@@ -106,7 +108,7 @@ Notas:
 | `preferences` | Consulta proveedor, perfiles, conteos y próxima elección; activa un perfil o crea/actualiza con `save_profile` |
 | `stats` | Resumen histórico por estado, worker y tipo (`since_days`, defecto 30) |
 | `reload_config` | Relee y valida `colmena.yml`; jobs posteriores usan los cambios sin reiniciar |
-| `run` / `run_many` | Lanza uno o varios agentes (`worker?`, `kind?`, `isolation?`, `wait: true` espera el reporte; `run_many` con `wait: true` cierra la ronda en una llamada y devuelve `{ done, pending }` como `wait`, con `timeout_s` recortado a `defaults.wait_max_s`) |
+| `run` / `run_many` | Lanza uno o varios agentes (`worker?`, `kind?`, `isolation?`, `requires?` preflight de binarios/puertos/urls, `wait: true` espera el reporte; `run_many` con `wait: true` cierra la ronda en una llamada y devuelve `{ done, pending }` como `wait`, con `timeout_s` recortado a `defaults.wait_max_s`) |
 | `wait`, `status`, `list` | Seguimiento (`wait` hasta `defaults.wait_max_s`, defecto 600 s, tope 1800 s; `timeout_s` entre 1 y 1800; al vencer devuelve `pending` con estado y `elapsedS` sin cancelar; `mode: any/all`; añade `hint` de mejora continua al cerrar una ronda) |
 | `result` | Reporte `RESULT/FILES/TESTS/RISKS`, archivos, diffstat, rama, worker, modelo, proveedor, esfuerzo y costos registrado/nominal |
 | `diff` | Diff truncado; el completo queda en disco |
