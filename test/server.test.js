@@ -81,6 +81,39 @@ test('workers + report tools end to end', async () => {
   } finally { await client.close(); }
 });
 
+test('MC-13: workers expone avgDurationMin, p90DurationMin y etaHint de jobs terminados', async () => {
+  const home = codexOnlyHome();
+  const config = getConfig({ ...process.env, ...baseEnv(home) });
+  const { server } = buildServer(config);
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'workers-eta-test', version: '0' });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const call = async (name, args) => {
+    const r = await client.callTool({ name, arguments: args });
+    const text = r.content[0].text;
+    return r.isError ? { error: text } : JSON.parse(text);
+  };
+  try {
+    const before = (await call('workers', {})).find(worker => worker.alias === 'luna-max');
+    assert.equal(before.avgDurationMin, null);
+    assert.equal(before.p90DurationMin, null);
+    assert.match(before.etaHint, /sin jobs terminados/);
+
+    for (let i = 0; i < 3; i++) {
+      const run = await call('run', { task: `tarea ${i}`, cwd: tmp('luna-eta-'), wait: true });
+      assert.equal(run.state, 'done');
+    }
+    const after = (await call('workers', {})).find(worker => worker.alias === 'luna-max');
+    assert.equal(typeof after.avgDurationMin, 'number');
+    assert.equal(typeof after.p90DurationMin, 'number');
+    assert.match(after.etaHint, /n=3/);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
 test('MC-9: initialize reporta la versión de package.json', async () => {
   const { client } = await connect();
   try {
