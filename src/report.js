@@ -27,6 +27,7 @@ export function buildPrompt({ task, contextFiles = [], handoff = [], kind = 'run
   return p + REPORT_SUFFIX;
 }
 
+const INVISIBLE_RE = /[\u200B-\u200D\uFEFF]/g;
 const BLOCK_MARKER_RE = /^[ \t]*(?:(?:#{1,6}|[-*+])[ \t]+)+/;
 const EMPHASIS_RE = /^(?:\*{1,3}|_+|`{1,3})/;
 const WHOLE_EMPHASIS_RE = /^(\*{1,3}|_+|`{1,3})(.+)\1$/;
@@ -60,7 +61,7 @@ function parseSectionLine(line) {
 }
 
 export function parseReport(text) {
-  const raw = typeof text === 'string' ? text : '';
+  const raw = typeof text === 'string' ? text.replace(INVISIBLE_RE, '') : '';
   const sections = {};
   let currentKey = null;
   let buffer = [];

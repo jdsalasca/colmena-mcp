@@ -162,3 +162,9 @@ test('worktree run jobs get git rules naming the branch; other jobs do not', () 
   assert.doesNotMatch(buildPrompt({ task: 'x', kind: 'run' }), /NO hagas merge/i);
   assert.doesNotMatch(buildPrompt({ task: 'x', kind: 'review', branch: 'colmena/ab12' }), /NO hagas merge/i);
 });
+
+test('zero-width characters before a key do not break parsing', () => {
+  const r = parseReport('​RESULT: ok\nFILES: a.js\nTESTS: 1/1\nRISKS: ninguno');
+  assert.equal(r.ok, true);
+  assert.equal(r.sections.RESULT, 'ok');
+});
