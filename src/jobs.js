@@ -75,6 +75,20 @@ export function createJobManager(config, {
   const readFile = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
   const lastMessage = id => readFile(path.join(store.jobDir(id), 'last_message.md'));
   const need = id => { const m = store.get(id); if (!m) throw new Error(`job ${id} no existe`); return m; };
+  // `continue` links the old job to the new one; following the chain from an old id lands on its latest descendant.
+  function chainFrom(id) {
+    const from = id;
+    const seen = new Set();
+    let current = id;
+    while (!seen.has(current)) {
+      seen.add(current);
+      const next = need(current).continuedBy;
+      const latest = Array.isArray(next) ? next.at(-1) : next;
+      if (!latest || !store.get(latest)) break;
+      current = latest;
+    }
+    return current === from ? { id: from, followed: null } : { id: current, followed: { from, to: current } };
+  }
   const persistText = (file, text) => {
     try { writeArtifact(file, text); } catch { /* artifacts must never break the job */ }
   };
@@ -494,15 +508,21 @@ export function createJobManager(config, {
     pump();
   }
 
-  function status(id) {
+  function baseStatus(id) {
     const m = need(id);
     const end = m.endedAt ?? Date.now();
     return { id, state: m.state, kind: m.kind, worker: m.worker, model: m.model ?? null, provider: m.provider ?? null, effort: m.effort ?? null, elapsedS: Math.round((end - (m.startedAt ?? m.createdAt)) / 1000), task: (m.task ?? '').slice(0, 80), ...(m.branch ? { branch: m.branch } : {}), ...(m.note ? { note: m.note } : {}), ...(m.phase ? { phase: m.phase } : {}), ...(m.finishedByGrace ? { finishedByGrace: true } : {}), ...(m.message ? { message: m.message } : {}) };
   }
 
-  function result(id, { detail = 'min' } = {}) {
+  function status(id) {
+    const c = chainFrom(id);
+    const s = baseStatus(c.id);
+    return c.followed ? { ...s, followed: c.followed } : s;
+  }
+
+  function baseResult(id, { detail = 'min' } = {}) {
     const m = need(id);
-    if (!TERMINAL.has(m.state)) return status(id);
+    if (!TERMINAL.has(m.state)) return baseStatus(id);
     const text = lastMessage(id) ?? '';
     const out = {
       id, state: m.state, kind: m.kind, worker: m.worker,
@@ -532,22 +552,36 @@ export function createJobManager(config, {
     return out;
   }
 
+  function result(id, options) {
+    const c = chainFrom(id);
+    const out = baseResult(c.id, options);
+    return c.followed ? { ...out, followed: c.followed } : out;
+  }
+
   async function wait(ids, { mode = 'all', timeoutS = 120 } = {}) {
     ids.forEach(need);
+    // A continued job is substituted by its latest descendant so a stale old id never returns the obsolete report.
+    const chains = ids.map(id => chainFrom(id));
+    const finals = [...new Set(chains.map(c => c.id))];
+    const followedBy = new Map(chains.filter(c => c.followed).map(c => [c.id, c.followed]));
+    const note = id => (followedBy.has(id) ? { followed: followedBy.get(id) } : {});
     const maxS = Math.min(Math.max(config.waitMaxS ?? 600, 1), 1800);
     const t = Math.min(Math.max(timeoutS, 1), maxS) * 1000;
-    const ps = ids.map(id => finished.get(id)?.promise ?? Promise.resolve());
+    const ps = finals.map(id => finished.get(id)?.promise ?? Promise.resolve());
     const cond = mode === 'any' ? Promise.race(ps) : Promise.all(ps);
     let timer;
     await Promise.race([cond, new Promise(r => { timer = setTimeout(r, t); })]);
     clearTimeout(timer);
     const isTerm = id => TERMINAL.has(need(id).state);
-    return { done: ids.filter(isTerm).map(id => result(id)), pending: ids.filter(id => !isTerm(id)).map(status) };
+    return {
+      done: finals.filter(isTerm).map(id => ({ ...baseResult(id), ...note(id) })),
+      pending: finals.filter(id => !isTerm(id)).map(id => ({ ...baseStatus(id), ...note(id) })),
+    };
   }
 
   async function cancel(id) {
     const m = need(id);
-    if (TERMINAL.has(m.state)) return status(id);
+    if (TERMINAL.has(m.state)) return baseStatus(id);
     const qi = queue.findIndex(q => q.id === id);
     if (qi >= 0) {
       queue.splice(qi, 1);
@@ -556,21 +590,23 @@ export function createJobManager(config, {
       releaseBudget(id);
       fs.rmSync(path.join(store.jobDir(id), 'prompt.txt'), { force: true });
       finished.get(id)?.resolve();
-      return status(id);
+      return baseStatus(id);
     }
     const l = live.get(id);
     if (l) { l.cancelled = true; store.update(id, { cancelRequested: true }); await l.kill(); }
-    return status(id);
+    return baseStatus(id);
   }
 
   function continueJob(id, message) {
     const m = need(id);
     if (!TERMINAL.has(m.state)) throw new Error(`job ${id} sigue ${m.state}; espera a que termine`);
     if (!m.sessionId) throw new Error(`job ${id} no guardó session id; no se puede reanudar`);
-    return submit({
+    const nextId = submit({
       task: message, cwd: m.cwd, parentId: id, resumeSessionId: m.sessionId, kind: 'run', worker: m.worker,
       workspace: { workdir: m.workdir, branch: m.branch, base: m.base, readonly: m.readonly },
     });
+    store.update(id, { continuedBy: m.continuedBy == null ? nextId : [...(Array.isArray(m.continuedBy) ? m.continuedBy : [m.continuedBy]), nextId] });
+    return nextId;
   }
 
   function retry(id, task, worker) {
@@ -722,7 +758,7 @@ export function createJobManager(config, {
     bus, resolveWorker, routeWorker: spec => chooseWorker(config.settings, ledger, spec), workers: () => workerStatus(config.settings, ledger),
     allocationCounts: profile => ledger.allocationCounts(profile),
     submit, status, result, wait, cancel, continueJob, retry, summarize, compact, review, verdict, recoverOrphans, pruneTerminalJobs, shutdown,
-    list: f => store.list(f ?? {}).map(m => status(m.id)),
+    list: f => store.list(f ?? {}).map(m => baseStatus(m.id)),
     metas: () => store.list({}),
     meta: id => need(id),
     mark: (id, patch) => store.update(id, patch),
