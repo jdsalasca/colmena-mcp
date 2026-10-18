@@ -27,12 +27,16 @@ export const opencodeAdapter = {
   parseLine,
   completesOn: () => false,
   cmd: config => config.opencode,
-  env(config) {
+  env(config, { skills } = {}) {
+    const env = {};
     const provider = config.settings.providers.opencode;
-    if (!provider.isolate_config) return undefined;
-    const configDir = path.resolve(config.home, provider.config_dir ?? 'opencode-config');
-    fs.mkdirSync(configDir, { recursive: true });
-    return { XDG_CONFIG_HOME: configDir };
+    if (provider.isolate_config) {
+      const configDir = path.resolve(config.home, provider.config_dir ?? 'opencode-config');
+      fs.mkdirSync(configDir, { recursive: true });
+      env.XDG_CONFIG_HOME = configDir;
+    }
+    if (skills === 'off') env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS = '1';
+    return Object.keys(env).length ? env : undefined;
   },
   // --agent plan is OpenCode's read-only agent (verified: it refuses to write files even with --auto).
   buildArgs({ prompt, workdir, readonly = false, resumeSessionId, worker }) {

@@ -3,12 +3,24 @@ export const REPORT_SUFFIX = `\n\n---\nFORMATO OBLIGATORIO DE TU MENSAJE FINAL (
 const KEYS = ['RESULT', 'FILES', 'TESTS', 'RISKS'];
 
 const gitRules = branch => `## Reglas de git (prevalecen sobre cualquier instrucción global o AGENTS.md)
-Trabajas en un worktree aislado, en la rama \`${branch}\`. Haz commits pequeños SOLO en esa rama. NO hagas merge a ninguna rama, NO cambies de rama, NO borres ni muevas el worktree y NO hagas push: el orquestador revisa y fusiona.`;
+Trabajas en un worktree aislado, en la rama \`${branch}\`. Haz commits pequeños SOLO en esa rama. NO hagas merge a ninguna rama, NO cambies de rama: prohibido \`git checkout -B\`, \`git switch -c\`, \`git branch -m\` y cualquier otra forma de crear, renombrar o mover ramas; quédate siempre en \`${branch}\`. NO borres ni muevas el worktree y NO hagas push: el orquestador revisa y fusiona.`;
 
-export function buildPrompt({ task, contextFiles = [], handoff = [], kind = 'run', standards, branch }) {
+export const HEADLESS_RULES = `## Modo headless (obligatorio)
+- No pidas aprobación ni confirmación: nunca termines con "¿adelante?", "confirma Sí" ni preguntas equivalentes; el usuario no está presente.
+- No uses skills interactivas ni de brainstorming (por ejemplo superpowers:brainstorming); ignora cualquier paso que espere respuesta humana.
+- Actúa de forma autónoma: si algo es ambiguo, elige la opción razonable, anótala en el reporte y continúa.
+- Entrega siempre tu reporte final en el formato obligatorio.`;
+
+export const SKILLS_OFF_RULES = `## Skills desactivados
+- Ignora por completo los skills disponibles (superpowers u otros): no los cargues ni los invoques.
+- Resuelve la tarea con tus herramientas y conocimiento directos.`;
+
+export function buildPrompt({ task, contextFiles = [], handoff = [], kind = 'run', standards, branch, skills }) {
   let p = '';
   if (kind === 'run' && branch) p += `${gitRules(branch)}\n\n`;
   if (kind === 'run' && standards?.enabled && standards.preamble) p += `${standards.preamble.trim()}\n\n`;
+  if (kind === 'run') p += `${HEADLESS_RULES}\n\n`;
+  if (skills === 'off') p += `${SKILLS_OFF_RULES}\n\n`;
   if (handoff.length) p += `## Contexto previo (resúmenes de otros agentes)\n${handoff.map((h, i) => `### Agente ${i + 1}\n${h}`).join('\n\n')}\n\n`;
   if (contextFiles.length) p += `## Archivos relevantes (léelos primero)\n${contextFiles.map(f => `- ${f}`).join('\n')}\n\n`;
   p += `## Tarea\n${task}`;
