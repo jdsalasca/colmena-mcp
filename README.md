@@ -7,7 +7,7 @@ Servidor MCP (stdio) para que **Claude Code orqueste y valide, como un product m
 - **Aislamiento por llamada:** `worktree` (rama `colmena/<id>`, por defecto en repos git), `inplace` o `readonly`.
 - **Paralelismo con cola**, sesiones reanudables, resúmenes, compactación y relevo entre agentes.
 - **Plugin `notify`:** toast de Windows al lanzar agentes, latido cada 10 min mientras haya trabajo, aviso al terminar o fallar, y aviso de presupuesto cuando un worker cruza el umbral o agota su saldo.
-- **Plugins `report` y `present`:** crean un reporte HTML de la ronda y una presentación papercraft de cierre del hito, respectivamente.
+- **Plugins `report` y `present`:** crean un reporte HTML de la ronda y una presentación papercraft de cierre del hito, respectivamente. El reporte incluye las notas del orquestador (`notes`) y los commits de la rama de cada job (enlace a GitHub si `origin` lo es).
 - **Widget de escritorio:** la tool `widget` inicia, consulta y cierra la escena animada de Colmena.
 - **Mejora continua:** `improve` lanza un agente que deja en `docs/backlog/` ítems priorizados con briefs listos para delegar; `report` y `wait` te invitan cuando toca.
 - Sin base de datos: estado en `~/.colmena/` (`jobs/`, `worktrees/`, `reports/`, `usage.json`, `activity.log`, `audit.log`).
@@ -119,7 +119,7 @@ Notas:
 | `cancel` | Cancela y mata el árbol de procesos, incluidos los descendientes ya vistos aunque su padre haya muerto (`killedPids`/`survivors` en `meta.json`) |
 | `merge` | Fusiona `colmena/<id>` (manual; exige `verdict` previo salvo `force: true`; se niega con destino sucio; restaura ante conflictos) |
 | `cleanup` | Borra worktrees y ramas `colmena/*` propios (`force` para descartar trabajo no fusionado); con `older_than_days`+`force` purga además carpetas de jobs terminales antiguos (`jobsRemoved`) y de `reports/` vencidos (`reportsRemoved`) |
-| `report` | HTML de cierre de ronda (`job_ids`, `style?`, `title?`, `open?`); `next` sugiere `present` e indica lo que falta de `improve` |
+| `report` | HTML de cierre de ronda (`job_ids`, `style?`, `title?`, `subtitle?`, `notes?`, `open?`) con las decisiones del orquestador y hasta 10 commits por job (enlazados a `<repo>/commit/<hash>` si `origin` es GitHub); `next` sugiere `present` e indica lo que falta de `improve` |
 | `present` | Presentación HTML papercraft de un hito (`job_ids`, `title?`, `subtitle?`, `notes?`, `style?`, `open?`) |
 | `improve` | Mejora continua: agente en worktree que escribe `docs/backlog/<fecha>-<focus>.md` (backlog/features/debt/all) con briefs listos para delegar |
 | `widget` | `action: start \| status \| stop`: agrega el widget al escritorio, consulta su PID verificado o lo cierra |

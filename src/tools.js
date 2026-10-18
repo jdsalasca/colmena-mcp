@@ -10,6 +10,7 @@ import { notifyPlugin } from './plugins/notify.js';
 import { createNotifier } from './notifier.js';
 import { generateReport, pruneReportDirs } from './plugins/report.js';
 import { generatePresentation } from './plugins/present.js';
+import { NotesSchema } from './plugins/notes.js';
 import { computeStats, DAY_MS } from './stats.js';
 import { buildImprovePrompt, hasRecentImprove, PENDING_FOCUSES, CONTINUOUS_IMPROVEMENT_PROMPT } from './plugins/improve.js';
 import { createWidgetController } from './plugins/widget.js';
@@ -179,15 +180,15 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
       return { ...preferenceResult(selection), ...(save_profile ? { saved_profile: save_profile.name } : {}) };
     });
 
-  const reportTool = tool('report', 'Genera un reporte HTML bonito de lo logrado por los jobs indicados (ronda final). El worker del rol reporter lo redacta con el estilo elegido (defecto papercraft); si falla, se usa un renderizador de respaldo. Devuelve la ruta del HTML.',
-    { job_ids: z.array(z.string()).min(1), style: z.string().optional().describe('Nombre de estilo (carpeta styles/<nombre>); defecto: plugins.report.default_style'), title: z.string().optional(), subtitle: z.string().optional(), open: z.boolean().optional().describe('Abrir en el navegador al terminar') },
-    a => generateReport({ jm, config, ids: a.job_ids, style: a.style, title: a.title, subtitle: a.subtitle, open: a.open, atomicWriteDependencies }));
+  const reportTool = tool('report', 'Genera un reporte HTML bonito de lo logrado por los jobs indicados (ronda final). El worker del rol reporter lo redacta con el estilo elegido (defecto papercraft); si falla, se usa un renderizador de respaldo. Incluye los commits de cada rama (enlazados si origin es GitHub) y las notas del orquestador. Devuelve la ruta del HTML.',
+    { job_ids: z.array(z.string()).min(1), style: z.string().optional().describe('Nombre de estilo (carpeta styles/<nombre>); defecto: plugins.report.default_style'), title: z.string().optional(), subtitle: z.string().optional(), notes: NotesSchema, open: z.boolean().optional().describe('Abrir en el navegador al terminar') },
+    a => generateReport({ jm, config, ids: a.job_ids, style: a.style, title: a.title, subtitle: a.subtitle, notes: a.notes, open: a.open, atomicWriteDependencies }));
   if (!config.settings.plugins.report.enabled) reportTool.disable();
 
   const presentTool = tool('present', 'Genera una presentación HTML autocontenida en estilo papercraft para cerrar un hito; el rol presenter la redacta y, si falla, se crea un respaldo determinista.',
     {
       job_ids: z.array(z.string()).min(1), title: z.string().optional(), subtitle: z.string().optional(),
-      notes: z.string().optional().describe('Objetivo del hito, decisiones y riesgos del orquestador'),
+      notes: NotesSchema,
       style: z.string().optional().describe('Nombre de estilo (carpeta styles/<nombre>); defecto: plugins.present.default_style'),
       open: z.boolean().optional().describe('Abrir en el navegador al terminar'),
     },
