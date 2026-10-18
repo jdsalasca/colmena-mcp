@@ -14,6 +14,7 @@ import { buildPrompt, parseReport } from './report.js';
 import * as iso from './isolation.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { TERMINAL, VERDICTS } from './job-states.js';
+import { activityMetrics, shortTool } from './job-metrics.js';
 
 const RETRY_WINDOW_MS = 30_000;
 const CHECKPOINT_MS = 1000;
@@ -195,7 +196,7 @@ export function createJobManager(config, {
       usage: { ...(meta.usage ?? {}) }, logOffset: meta.logOffset ?? 0,
       adopted, timer: null, graceTimer: null, checkpointTimer: null, dirty: false, handle: null,
       treeSeen: new Map(), treeSampled: false, treeTimer: null, treeBusy: false, stallBusy: false, lastCpuMs: null,
-      killPromise: null, killReport: null,
+      killPromise: null, killReport: null, lastTool: meta.lastTool ?? null,
     };
     let lastSessionId = meta.sessionId;
     // A transient retry reuses the same job: the attempt appends to events.jsonl and the polling reader resumes at the saved offset.
@@ -216,7 +217,7 @@ export function createJobManager(config, {
     let lastStamp = logStamp();
     // An adopted job keeps the age of its log, so a long-mute provider dies at the next check instead of waiting a full window.
     const logAgeMs = logMtime() == null ? 0 : Math.max(0, Date.now() - logMtime());
-    let lastActivityAt = now() - logAgeMs;
+    state.lastActivityAt = now() - logAgeMs;
 
     // The union of every PID seen under the agent root survives dead intermediates: taskkill /T of
     // the root cannot reach a detached grandchild whose ParentProcessId no longer exists.
@@ -310,6 +311,8 @@ export function createJobManager(config, {
       logOffset: state.logOffset,
       usage: { ...state.usage },
       hasFinalMessage: state.hasFinalMessage,
+      lastActivityAt: state.lastActivityAt,
+      ...(state.lastTool ? { lastTool: state.lastTool } : {}),
       ...(state.delivered ? { delivered: true, deliveredAt: state.deliveredAt } : {}),
     });
     const flushCheckpoint = () => {
@@ -326,6 +329,7 @@ export function createJobManager(config, {
     };
     const onEvent = (event, logOffset) => {
       state.logOffset = logOffset;
+      state.lastActivityAt = now();
       if (event.kind === 'session' && event.sessionId !== lastSessionId) {
         lastSessionId = event.sessionId;
         clearTimeout(state.checkpointTimer);
@@ -353,12 +357,15 @@ export function createJobManager(config, {
           state.dirty = false;
           scheduleGrace();
         } else scheduleCheckpoint();
+      } else if (event.kind === 'tool') {
+        state.lastTool = shortTool(event.tool);
+        scheduleCheckpoint();
       } else scheduleCheckpoint();
       if (event.kind === 'session' && event.sessionId === lastSessionId && state.dirty) {
         scheduleCheckpoint();
       }
     };
-    const onOffset = logOffset => { state.logOffset = logOffset; scheduleCheckpoint(); };
+    const onOffset = logOffset => { state.logOffset = logOffset; state.lastActivityAt = now(); scheduleCheckpoint(); };
 
     const onTimeout = () => {
       if (state.delivered) finishByGrace('El agente ya había entregado su respuesta al alcanzar el timeout general; el proceso fue finalizado y el job se marcó done.');
@@ -374,8 +381,8 @@ export function createJobManager(config, {
       state.stallBusy = true;
       try {
         const stamp = logStamp();
-        if (stamp !== lastStamp) { lastStamp = stamp; lastActivityAt = now(); return; }
-        if (now() - lastActivityAt < stallMs) return;
+        if (stamp !== lastStamp) { lastStamp = stamp; state.lastActivityAt = now(); return; }
+        if (now() - state.lastActivityAt < stallMs) return;
         if (hasValidReport()) {
           finishByGrace('OpenCode ya había entregado un reporte válido; el proceso inactivo fue finalizado y el job se marcó done.');
           return;
@@ -386,7 +393,7 @@ export function createJobManager(config, {
         if (state.lastCpuMs == null) { state.lastCpuMs = tree.cpuMs; return; }
         if (tree.cpuMs > state.lastCpuMs) {
           state.lastCpuMs = tree.cpuMs;
-          lastActivityAt = now();
+          state.lastActivityAt = now();
           return;
         }
         state.lastCpuMs = tree.cpuMs;
@@ -432,7 +439,7 @@ export function createJobManager(config, {
           clearTimeout(state.graceTimer);
           flushCheckpoint();
           store.update(id, { retries, delivered: false, deliveredAt: null, hasFinalMessage: false });
-          lastActivityAt = now();
+          state.lastActivityAt = now();
           lastStamp = logStamp();
           beginAttempt();
           return;
@@ -465,8 +472,10 @@ export function createJobManager(config, {
     const dir = store.jobDir(id);
     let text = lastMessage(id);
     if (text == null && state.lastText) { text = state.lastText; persistText(path.join(dir, 'last_message.md'), text); }
+    const endedAt = Date.now();
     let patch = {
-      endedAt: Date.now(), logOffset: state.logOffset, usage: { ...state.usage }, hasFinalMessage: state.hasFinalMessage,
+      endedAt, logOffset: state.logOffset, usage: { ...state.usage }, hasFinalMessage: state.hasFinalMessage,
+      lastActivityAt: endedAt, ...(state.lastTool ? { lastTool: state.lastTool } : {}),
       ...(state.delivered ? { delivered: true, deliveredAt: state.deliveredAt } : {}),
     };
     if (state.cancelled) patch.state = 'cancelled';
@@ -494,10 +503,26 @@ export function createJobManager(config, {
     pump();
   }
 
+  function activityOf(m) {
+    const l = live.get(m.id);
+    const lastActivityAt = l?.lastActivityAt ?? m.lastActivityAt ?? m.startedAt ?? m.createdAt;
+    const activity = activityMetrics({
+      now: now(), lastActivityAt,
+      stallTimeoutMin: m.stallMin ?? config.stallTimeoutMin,
+      running: m.state === 'running' && m.phase == null,
+    });
+    return {
+      lastActivityAt: activity.lastActivityAt,
+      idleS: activity.idleS,
+      lastTool: shortTool(l?.lastTool ?? m.lastTool),
+      ...(activity.looksStalled ? { looksStalled: true } : {}),
+    };
+  }
+
   function status(id) {
     const m = need(id);
     const end = m.endedAt ?? Date.now();
-    return { id, state: m.state, kind: m.kind, worker: m.worker, model: m.model ?? null, provider: m.provider ?? null, effort: m.effort ?? null, elapsedS: Math.round((end - (m.startedAt ?? m.createdAt)) / 1000), task: (m.task ?? '').slice(0, 80), ...(m.branch ? { branch: m.branch } : {}), ...(m.note ? { note: m.note } : {}), ...(m.phase ? { phase: m.phase } : {}), ...(m.finishedByGrace ? { finishedByGrace: true } : {}), ...(m.message ? { message: m.message } : {}) };
+    return { id, state: m.state, kind: m.kind, worker: m.worker, model: m.model ?? null, provider: m.provider ?? null, effort: m.effort ?? null, elapsedS: Math.round((end - (m.startedAt ?? m.createdAt)) / 1000), ...activityOf(m), task: (m.task ?? '').slice(0, 80), ...(m.branch ? { branch: m.branch } : {}), ...(m.note ? { note: m.note } : {}), ...(m.phase ? { phase: m.phase } : {}), ...(m.finishedByGrace ? { finishedByGrace: true } : {}), ...(m.message ? { message: m.message } : {}) };
   }
 
   function result(id, { detail = 'min' } = {}) {
