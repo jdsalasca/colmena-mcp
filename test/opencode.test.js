@@ -38,6 +38,15 @@ test('opencode parseLine: session, text, usage with cost, garbage', () => {
   assert.equal(parseLine('nope').kind, 'other');
   assert.equal(parseLine('{"type":"tool_use"}').kind, 'other');
 });
+test('opencode parseLine: tool_use expone nombre y detalle de la última herramienta', () => {
+  const { parseLine } = oc;
+  const bash = parseLine('{"type":"tool_use","timestamp":1,"sessionID":"ses_x","part":{"id":"p","callID":"c","tool":"bash","state":{"status":"completed","input":{"command":"npm test","description":"correr pruebas"},"title":"correr pruebas"}}}');
+  assert.deepEqual(bash, { kind: 'tool', tool: 'bash: npm test' });
+  const read = parseLine('{"type":"tool_use","part":{"tool":"read","state":{"input":{"filePath":"src/jobs.js"}}}}');
+  assert.deepEqual(read, { kind: 'tool', tool: 'read: src/jobs.js' });
+  const bare = parseLine('{"type":"tool_use","part":{"tool":"task"}}');
+  assert.deepEqual(bare, { kind: 'tool', tool: 'task' });
+});
 test('opencode parseLine: provider error events expose message and retryable', () => {
   const { parseLine } = oc;
   const unknown = parseLine('{"type":"error","timestamp":1,"sessionID":"ses_x","error":{"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details.","ref":"err_ae29f0e4"}}}');

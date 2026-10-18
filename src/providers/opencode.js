@@ -19,6 +19,12 @@ function parseLine(line) {
     if (typeof o.part.cost === 'number') usage.cost_usd = o.part.cost;
     return { kind: 'usage', usage };
   }
+  // Verified against opencode 1.18.30: `tool_use` carries part.tool plus part.state.input; it is emitted when the tool completes.
+  if (o?.type === 'tool_use' && o.part?.tool) {
+    const input = o.part.state?.input ?? {};
+    const detail = input.command ?? input.filePath ?? input.path ?? input.pattern ?? input.url ?? input.query ?? input.description ?? o.part.state?.title;
+    return { kind: 'tool', tool: [o.part.tool, detail].filter(Boolean).join(': ') };
+  }
   return { kind: 'other' };
 }
 

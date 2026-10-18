@@ -113,3 +113,27 @@ export function computeStats(metas, { sinceMs = 0, now = Date.now() } = {}) {
 }
 
 export { DAY_MS };
+
+// ETA por worker a partir de jobs terminados con duración válida; con menos de minSamples muestras no hay estimación.
+export function workerDurationEstimates(metas, { minSamples = 3 } = {}) {
+  const durationsByWorker = Object.create(null);
+  for (const meta of metas) {
+    if (!TERMINAL.has(meta.state)) continue;
+    const metrics = jobMetrics(meta);
+    if (!metrics.durationValid) continue;
+    const worker = meta.worker ?? 'unknown';
+    (durationsByWorker[worker] ??= []).push(metrics.durationS);
+  }
+  const toMinutes = seconds => Math.round((seconds / 60) * 10) / 10;
+  return Object.fromEntries(Object.entries(durationsByWorker).map(([worker, durations]) => {
+    const sorted = [...durations].sort((a, b) => a - b);
+    const samples = sorted.length;
+    if (samples < minSamples) {
+      return [worker, { samples, avgDurationMin: null, p90DurationMin: null, etaHint: `sin muestras suficientes (${samples}/${minSamples})` }];
+    }
+    const avgDurationMin = toMinutes(sorted.reduce((sum, seconds) => sum + seconds, 0) / samples);
+    // Nearest-rank (NIST): el menor valor que cubre al menos el 90% de las muestras.
+    const p90DurationMin = toMinutes(sorted[Math.ceil(samples * 0.9) - 1]);
+    return [worker, { samples, avgDurationMin, p90DurationMin, etaHint: `~${avgDurationMin} min (p90 ${p90DurationMin} min, n=${samples})` }];
+  }));
+}

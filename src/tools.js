@@ -11,7 +11,7 @@ import { createNotifier } from './notifier.js';
 import { generateReport, pruneReportDirs } from './plugins/report.js';
 import { generatePresentation } from './plugins/present.js';
 import { NotesSchema } from './plugins/notes.js';
-import { computeStats, DAY_MS } from './stats.js';
+import { computeStats, DAY_MS, workerDurationEstimates } from './stats.js';
 import { buildImprovePrompt, hasRecentImprove, PENDING_FOCUSES, CONTINUOUS_IMPROVEMENT_PROMPT } from './plugins/improve.js';
 import { createWidgetController } from './plugins/widget.js';
 import { writeFileAtomic } from './atomic-write.js';
@@ -139,7 +139,15 @@ export function buildServer(config, { atomicWriteDependencies, widgetDependencie
     };
   };
 
-  tool('workers', 'Lista los workers de colmena.yml con prioridad, fortalezas, preferencia, participación del perfil activo, gasto del mes, reservas de jobs vivos, presupuesto restante y disponibilidad. Úsalo para decidir a quién delegar.', {}, () => jm.workers());
+  const workersWithEta = () => {
+    const estimates = workerDurationEstimates(jm.metas());
+    return jm.workers().map(worker => ({
+      ...worker,
+      ...(estimates[worker.alias] ?? { samples: 0, avgDurationMin: null, p90DurationMin: null, etaHint: 'sin jobs terminados' }),
+    }));
+  };
+
+  tool('workers', 'Lista los workers de colmena.yml con prioridad, fortalezas, preferencia, participación del perfil activo, gasto del mes, reservas de jobs vivos, presupuesto restante y disponibilidad. Añade avgDurationMin/p90DurationMin (minutos) y etaHint de sus jobs terminados (null con menos de 3 muestras). Úsalo para decidir a quién delegar.', {}, workersWithEta);
 
   tool('doctor', 'Verificación previa sin gastar llamadas ni lanzar agentes: revisa Node, git, binarios de Codex/OpenCode resueltos, colmena.yml cargado, COLMENA_HOME escribible, ejecutable del widget (warn) y locks obsoletos de usage.json. Devuelve ok y checks con instrucciones accionables.', {}, () => runDoctor(config));
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeStats } from '../src/stats.js';
+import { computeStats, workerDurationEstimates } from '../src/stats.js';
 
 const now = Date.UTC(2026, 9, 15, 12);
 
@@ -123,4 +123,30 @@ test('computeStats agrega costo nominal por worker además del costo contabiliza
 
   assert.equal(stats.byWorker.gratis.costUsd, 0);
   assert.equal(stats.byWorker.gratis.nominalCostUsd, 0.02);
+});
+
+const finished = (id, worker, durationS, state = 'done') => ({
+  id, worker, state, createdAt: now - durationS * 1000, startedAt: now - durationS * 1000, endedAt: now,
+});
+
+test('workerDurationEstimates calcula avg/p90 en minutos y exige 3 muestras', () => {
+  const estimates = workerDurationEstimates([
+    finished('a', 'luna', 3600), finished('b', 'luna', 5400), finished('c', 'luna', 7200),
+    finished('d', 'alt', 60, 'failed'), finished('e', 'alt', 180, 'cancelled'),
+    { id: 'f', worker: 'luna', state: 'running', createdAt: now, startedAt: now - 10_000 },
+    { id: 'g', worker: 'alt', state: 'done', createdAt: now },
+  ]);
+
+  assert.deepEqual(estimates, {
+    luna: { samples: 3, avgDurationMin: 90, p90DurationMin: 120, etaHint: '~90 min (p90 120 min, n=3)' },
+    alt: { samples: 2, avgDurationMin: null, p90DurationMin: null, etaHint: 'sin muestras suficientes (2/3)' },
+  });
+});
+
+test('workerDurationEstimates usa nearest-rank para p90', () => {
+  const metas = Array.from({ length: 10 }, (_, i) => finished(`j${i}`, 'luna', (i + 1) * 60));
+  assert.deepEqual(workerDurationEstimates(metas).luna, {
+    samples: 10, avgDurationMin: 5.5, p90DurationMin: 9, etaHint: '~5.5 min (p90 9 min, n=10)',
+  });
+  assert.deepEqual(workerDurationEstimates([], {}), {});
 });
